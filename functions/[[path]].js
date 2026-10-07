@@ -1,212 +1,25 @@
-const UPSTREAM_DNS_PROVIDERS = [
-  { url: 'https://cloudflare-dns.com/dns-query', priority: 1, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'www.cloudflare.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://1.1.1.1/dns-query', priority: 2, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'one.one.one.one', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://1.0.0.1/dns-query', priority: 3, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'one.one.one.one', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://mozilla.cloudflare-dns.com/dns-query', priority: 4, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'mozilla.cloudflare-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://security.cloudflare-dns.com/dns-query', priority: 5, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'security.cloudflare-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.cloudflare-dns.com/dns-query', priority: 6, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.cloudflare-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns64.cloudflare-dns.com/dns-query', priority: 7, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns64.cloudflare-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://brave.cloudflare-dns.com/dns-query', priority: 8, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'brave.cloudflare-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.google/dns-query', priority: 9, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'www.google.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://8888.google/dns-query', priority: 10, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'www.google.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns64.dns.google/dns-query', priority: 11, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns64.dns.google', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.quad9.net/dns-query', priority: 12, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'www.quad9.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns9.quad9.net/dns-query', priority: 13, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns9.quad9.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns10.quad9.net/dns-query', priority: 14, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns10.quad9.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns11.quad9.net/dns-query', priority: 15, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns11.quad9.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns12.quad9.net/dns-query', priority: 16, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns12.quad9.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.nextdns.io/dns-query', priority: 17, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.nextdns.io', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.opendns.com/dns-query', priority: 18, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'www.opendns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.familyshield.opendns.com/dns-query', priority: 19, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.familyshield.opendns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.umbrella.com/dns-query', priority: 20, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.umbrella.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.adguard-dns.com/dns-query', priority: 21, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.adguard-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://unfiltered.adguard-dns.com/dns-query', priority: 22, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'unfiltered.adguard-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.adguard-dns.com/dns-query', priority: 23, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.adguard-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.mullvad.net/dns-query', priority: 24, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://adblock.doh.mullvad.net/dns-query', priority: 25, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'adblock.doh.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://base.dns.mullvad.net/dns-query', priority: 26, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'base.dns.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://extended.dns.mullvad.net/dns-query', priority: 27, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'extended.dns.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://all.dns.mullvad.net/dns-query', priority: 28, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'all.dns.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.dns.mullvad.net/dns-query', priority: 29, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.dns.mullvad.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/p0', priority: 30, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/p1', priority: 31, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/p2', priority: 32, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/p3', priority: 33, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/family', priority: 34, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedns.controld.com/uncensored', priority: 35, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedns.controld.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://sky.rethinkdns.com/dns-query', priority: 36, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'sky.rethinkdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.cleanbrowsing.org/doh/security-filter/', priority: 37, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.cleanbrowsing.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.cleanbrowsing.org/doh/adult-filter/', priority: 38, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.cleanbrowsing.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.cleanbrowsing.org/doh/family-filter/', priority: 39, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.cleanbrowsing.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://zero.dns0.eu/dns-query', priority: 40, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'zero.dns0.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://kids.dns0.eu/dns-query', priority: 41, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'kids.dns0.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://private.canadianshield.cira.ca/dns-query', priority: 42, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'private.canadianshield.cira.ca', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://protected.canadianshield.cira.ca/dns-query', priority: 43, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'protected.canadianshield.cira.ca', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.canadianshield.cira.ca/dns-query', priority: 44, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.canadianshield.cira.ca', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://protective.joindns4.eu/dns-query', priority: 45, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'protective.joindns4.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://child.joindns4.eu/dns-query', priority: 46, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'child.joindns4.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://noads.joindns4.eu/dns-query', priority: 47, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'noads.joindns4.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://child-noads.joindns4.eu/dns-query', priority: 48, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'child-noads.joindns4.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://unfiltered.joindns4.eu/dns-query', priority: 49, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'unfiltered.joindns4.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://wikimedia-dns.org/dns-query', priority: 50, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'wikimedia-dns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.wikimedia.org/dns-query', priority: 51, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.wikimedia.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.switch.ch/dns-query', priority: 52, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.switch.ch', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.digitale-gesellschaft.ch/dns-query', priority: 53, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.digitale-gesellschaft.ch', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.libredns.gr/dns-query', priority: 54, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.libredns.gr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.libredns.gr/noads', priority: 55, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.libredns.gr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://odvr.nic.cz/dns-query', priority: 56, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'odvr.nic.cz', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.ffmuc.net/dns-query', priority: 57, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.ffmuc.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.applied-privacy.net/query', priority: 58, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.applied-privacy.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.aa.net.uk/dns-query', priority: 59, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.aa.net.uk', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.alidns.com/dns-query', priority: 60, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.alidns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.twnic.tw/dns-query', priority: 61, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.twnic.tw', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.pub/dns-query', priority: 62, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.pub', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.360.cn/dns-query', priority: 63, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.360.cn', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://public.dns.iij.jp/dns-query', priority: 64, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'public.dns.iij.jp', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.dns.sb/dns-query', priority: 65, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.dns.sb', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.pub/dns-query', priority: 66, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.pub', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ordns.he.net/dns-query', priority: 67, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ordns.he.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.brahma.world/dns-query', priority: 68, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.brahma.world', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.cfiec.net/dns-query', priority: 69, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.cfiec.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.dnshome.de/dns-query', priority: 70, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.dnshome.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dnsforge.de/dns-query', priority: 71, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dnsforge.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://clean.dnsforge.de/dns-query', priority: 72, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'clean.dnsforge.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://hard.dnsforge.de/dns-query', priority: 73, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'hard.dnsforge.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh-fi.blahdns.com/dns-query', priority: 74, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh-fi.blahdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh-jp.blahdns.com/dns-query', priority: 75, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh-jp.blahdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh-de.blahdns.com/dns-query', priority: 76, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh-de.blahdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh-sg.blahdns.com/dns-query', priority: 77, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh-sg.blahdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.centraleu.pi-dns.com/dns-query', priority: 78, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.centraleu.pi-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.westus.pi-dns.com/dns-query', priority: 79, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.westus.pi-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.eastus.pi-dns.com/dns-query', priority: 80, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.eastus.pi-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.northeu.pi-dns.com/dns-query', priority: 81, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.northeu.pi-dns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.tiar.app/dns-query', priority: 82, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.tiar.app', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.tiarap.org/dns-query', priority: 83, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.tiarap.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://jp.tiar.app/dns-query', priority: 84, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'jp.tiar.app', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://jp.tiarap.org/dns-query', priority: 85, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'jp.tiarap.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.containerpi.com/dns-query', priority: 86, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.containerpi.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.rubyfish.cn/dns-query', priority: 87, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.rubyfish.cn', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.armadillodns.net/dns-query', priority: 88, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.armadillodns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://commons.host/dns-query', priority: 89, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'commons.host', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.crypto.sx/dns-query', priority: 90, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.crypto.sx', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.dnswarden.com/uncensored', priority: 91, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.dnswarden.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://resolver-eu.lelux.fi/dns-query', priority: 92, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'resolver-eu.lelux.fi', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.bortzmeyer.fr/dns-query', priority: 93, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.bortzmeyer.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.oszx.co/dns-query', priority: 94, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.oszx.co', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ada.openbld.net/dns-query', priority: 95, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ada.openbld.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ric.openbld.net/dns-query', priority: 96, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ric.openbld.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://luna.openbld.net/dns-query', priority: 97, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'luna.openbld.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://fra01.dnscry.pt/dns-query', priority: 98, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'fra01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://lon01.dnscry.pt/dns-query', priority: 99, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'lon01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://nyc01.dnscry.pt/dns-query', priority: 100, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'nyc01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://par01.dnscry.pt/dns-query', priority: 101, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'par01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ams01.dnscry.pt/dns-query', priority: 102, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ams01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://sin01.dnscry.pt/dns-query', priority: 103, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'sin01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://syd01.dnscry.pt/dns-query', priority: 104, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'syd01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://tok01.dnscry.pt/dns-query', priority: 105, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'tok01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://sea01.dnscry.pt/dns-query', priority: 106, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'sea01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://lax01.dnscry.pt/dns-query', priority: 107, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'lax01.dnscry.pt', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://anycast.uncensoreddns.org/dns-query', priority: 108, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'anycast.uncensoreddns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://unicast.uncensoreddns.org/dns-query', priority: 109, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'unicast.uncensoreddns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.njal.la/dns-query', priority: 110, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.njal.la', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://freedom.mydns.network/dns-query', priority: 111, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'freedom.mydns.network', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://paranoia.mydns.network/dns-query', priority: 112, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'paranoia.mydns.network', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://adblock.mydns.network/dns-query', priority: 113, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'adblock.mydns.network', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.mydns.network/dns-query', priority: 114, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.mydns.network', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.comss.one/dns-query', priority: 115, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.comss.one', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://router.comss.one/dns-query', priority: 116, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'router.comss.one', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ca01.dns4me.net', priority: 117, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ca01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ca02.dns4me.net', priority: 118, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ca02.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://us01.dns4me.net', priority: 119, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'us01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://us02.dns4me.net', priority: 120, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'us02.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://uk01.dns4me.net', priority: 121, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'uk01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://au01.dns4me.net', priority: 122, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'au01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://sg01.dns4me.net', priority: 123, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'sg01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://de01.dns4me.net', priority: 124, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'de01.dns4me.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dnspub.restena.lu/dns-query', priority: 125, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dnspub.restena.lu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://safeservedns.com/dns-query', priority: 126, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'safeservedns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.rabbitdns.org/dns-query', priority: 127, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.rabbitdns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://security.rabbitdns.org/dns-query', priority: 128, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'security.rabbitdns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://family.rabbitdns.org/dns-query', priority: 129, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'family.rabbitdns.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://v.recipes/dns-query', priority: 130, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'v.recipes', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://v.recipes/dns-adblock', priority: 131, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'v.recipes', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://v.recipes/dns-ecs', priority: 132, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'v.recipes', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.surfsharkdns.com/dns-query', priority: 133, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.surfsharkdns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.blokada.org/dns-query', priority: 134, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.blokada.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://root.hagezi.org/dns-query', priority: 135, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'root.hagezi.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://wurzn.hagezi.org/dns-query', priority: 136, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'wurzn.hagezi.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://juuri.hagezi.org/dns-query', priority: 137, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'juuri.hagezi.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://eu1.dns.lavate.ch/dns-query', priority: 138, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'eu1.dns.lavate.ch', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.seby.io/dns-query', priority: 139, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.seby.io', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://resolver1.absolight.net/dns-query', priority: 140, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'resolver1.absolight.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://resolver2.absolight.net/dns-query', priority: 141, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'resolver2.absolight.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://per.adfilter.net/dns-query', priority: 142, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'per.adfilter.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://syd.adfilter.net/dns-query', priority: 143, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'syd.adfilter.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://adl.adfilter.net/dns-query', priority: 144, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'adl.adfilter.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ns0.fdn.fr/dns-query', priority: 145, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ns0.fdn.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ns1.fdn.fr/dns-query', priority: 146, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ns1.fdn.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.technitium.com/dns-query', priority: 147, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.technitium.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.telekom.de/dns-query', priority: 148, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.telekom.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.aquilenet.fr/dns-query', priority: 149, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.aquilenet.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.lacontrevoie.fr/dns-query', priority: 150, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.lacontrevoie.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.belnet.be/dns-query', priority: 151, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.belnet.be', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns1.in-berlin.de/dns-query', priority: 152, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns1.in-berlin.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns2.in-berlin.de/dns-query', priority: 153, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns2.in-berlin.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://resolver.dnsprivacy.org.uk/dns-query', priority: 154, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'resolver.dnsprivacy.org.uk', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://resolver.sunet.se/dns-query', priority: 155, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'resolver.sunet.se', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ns1.opennameserver.org/dns-query', priority: 156, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ns1.opennameserver.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.froth.zone/dns-query', priority: 157, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.froth.zone', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.stormycloud.org/dns-query', priority: 158, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.stormycloud.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://adfree.usableprivacy.net/dns-query', priority: 159, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'adfree.usableprivacy.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.dns4all.eu/dns-query', priority: 160, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.dns4all.eu', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.smartguard.io/dns-query', priority: 161, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.smartguard.io', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://privacy.plumedns.com/dns-query', priority: 162, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'privacy.plumedns.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.bitdefender.net/dns-query', priority: 163, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.bitdefender.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.cctld.kg/dns-query', priority: 164, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.cctld.kg', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.lv/dns-query', priority: 165, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.lv', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.nic.lv/dns-query', priority: 166, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.nic.lv', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://japan.dnsovertor.cc/dns-query', priority: 167, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'japan.dnsovertor.cc', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://chuncheon.dnsovertor.cc/dns-query', priority: 168, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'chuncheon.dnsovertor.cc', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://seoul.dnsovertor.cc/dns-query', priority: 169, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'seoul.dnsovertor.cc', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.cert.ee/dns-query', priority: 170, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.cert.ee', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://secure.hafnova.com/dns-query', priority: 171, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'secure.hafnova.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.kescher.at/dns-query', priority: 202, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.kescher.at', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ibuki.cgnat.net/dns-query', priority: 203, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ibuki.cgnat.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.li/dns-query', priority: 204, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.li', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns4eu.online/dns-query', priority: 205, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns4eu.online', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.elemental.software/dns-query', priority: 206, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.elemental.software', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doth.huque.com/dns-query', priority: 207, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doth.huque.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://zdn.ro/dns-query', priority: 208, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'zdn.ro', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.zknt.org/dns-query', priority: 209, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.zknt.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://ns2.4netguides.org/dns-query', priority: 210, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'ns2.4netguides.org', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dukun.de/dns-query', priority: 211, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dukun.de', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.cynthialabs.net/dns-query', priority: 212, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.cynthialabs.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.la.ahadns.net/dns-query', priority: 213, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.la.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.ny.ahadns.net/dns-query', priority: 214, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.ny.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'na', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.nl.ahadns.net/dns-query', priority: 215, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.nl.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.pl.ahadns.net/dns-query', priority: 216, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.pl.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.in.ahadns.net/dns-query', priority: 217, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.in.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.sg.ahadns.net/dns-query', priority: 218, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.sg.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.au.ahadns.net/dns-query', priority: 219, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.au.ahadns.net', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'oceania', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dnslow.me/dns-query', priority: 220, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dnslow.me', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.dns-over-https.com/dns-query', priority: 221, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.dns-over-https.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.nic.fr/dns-query', priority: 222, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.nic.fr', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.decloudus.com/dns-query', priority: 223, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.decloudus.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.flatuslifir.is/dns-query', priority: 224, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.flatuslifir.is', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://dns.paesa.es/dns-query', priority: 225, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'dns.paesa.es', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'eu', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://jcdns.pikapods.com/dns-query', priority: 226, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'jcdns.pikapods.com', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'global', circuitState: 'closed', lastCircuitOpen: 0 },
-  { url: 'https://doh.360.cn/dns-query', priority: 227, healthScore: 100, lastCheck: 0, consecutiveFailures: 0, fronting: 'doh.360.cn', avgResponseTime: 0, successCount: 0, totalRequests: 0, region: 'asia', circuitState: 'closed', lastCircuitOpen: 0 }
-];
-
+// ===== Configuration =====
 const DNS_CACHE_TTL_MIN = 60;
 const DNS_CACHE_TTL_MAX = 3600;
 const DNS_CACHE_TTL_DEFAULT = 300;
-const PARALLEL_RACING_COUNT = 10;
+const NEGATIVE_CACHE_TTL = 300;
+const PARALLEL_RACING_COUNT = 6;
 const RACE_TIMEOUT = 4000;
-const FALLBACK_TIMEOUT = 3000;
+const FALLBACK_TIMEOUT = 2500;
+const FALLBACK_PROVIDER_COUNT = 9;
+const FALLBACK_BATCH_SIZE = 3;
+const STALE_CACHE_GRACE_PERIOD = 86400; // seconds: serve expired entries when upstreams are dead
+const SHAPESHIFT_GET_RETRY = true; // retry a failed POST upstream once via GET ?dns=
+const FAST_FAIL_THRESHOLD_MS = 800; // failing faster than this => likely blocked: penalize harder
+const HOSTILE_FAILURE_RATIO = 0.5;
+const HOSTILE_MIN_SAMPLES = 10;
+const STEALTH_SCORE_BONUS = 25;
 const MAX_DNS_RESPONSE_SIZE = 4096;
 const MAX_DNS_REQUEST_SIZE = 1024;
+const MIN_DNS_MESSAGE_SIZE = 12; // DNS header size
 const HEALTH_CHECK_INTERVAL = 90000;
+const HEALTH_CHECK_BATCH = 5;
+const HEALTH_CHECK_TIMEOUT = 2500;
 const ADAPTIVE_LEARNING_INTERVAL = 180000;
 const RATE_LIMIT_REQUESTS = 200;
 const RATE_LIMIT_WINDOW = 60000;
@@ -214,10 +27,263 @@ const RATE_LIMIT_CLEANUP_INTERVAL = 120000;
 const MAX_CONCURRENT_REQUESTS = 150;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const CIRCUIT_BREAKER_TIMEOUT = 60000;
-const NEGATIVE_CACHE_TTL = 300;
+const DNS_CACHE_MAX = 8000;
+const NEGATIVE_CACHE_MAX = 2000;
+const DNS_CACHE_EVICT_BATCH = 2000;
+const NEGATIVE_CACHE_EVICT_BATCH = 500;
 const DNS_PADDING_ENABLED = true;
 const ECS_STRIPPING_ENABLED = true;
 
+// ===== Upstream providers: [url, region] =====
+const UPSTREAM_DNS_LIST = [
+  ['https://cloudflare-dns.com/dns-query', 'global'],
+  ['https://1.1.1.1/dns-query', 'global'],
+  ['https://1.0.0.1/dns-query', 'global'],
+  ['https://mozilla.cloudflare-dns.com/dns-query', 'global'],
+  ['https://security.cloudflare-dns.com/dns-query', 'global'],
+  ['https://family.cloudflare-dns.com/dns-query', 'global'],
+  ['https://dns64.cloudflare-dns.com/dns-query', 'global'],
+  ['https://brave.cloudflare-dns.com/dns-query', 'global'],
+  ['https://dns.google/dns-query', 'global'],
+  ['https://8888.google/dns-query', 'global'],
+  ['https://dns64.dns.google/dns-query', 'global'],
+  ['https://dns.quad9.net/dns-query', 'global'],
+  ['https://dns9.quad9.net/dns-query', 'global'],
+  ['https://dns10.quad9.net/dns-query', 'global'],
+  ['https://dns11.quad9.net/dns-query', 'global'],
+  ['https://dns12.quad9.net/dns-query', 'global'],
+  ['https://dns.nextdns.io/dns-query', 'global'],
+  ['https://doh.opendns.com/dns-query', 'na'],
+  ['https://doh.familyshield.opendns.com/dns-query', 'na'],
+  ['https://doh.umbrella.com/dns-query', 'global'],
+  ['https://dns.adguard-dns.com/dns-query', 'global'],
+  ['https://unfiltered.adguard-dns.com/dns-query', 'global'],
+  ['https://family.adguard-dns.com/dns-query', 'global'],
+  ['https://doh.mullvad.net/dns-query', 'eu'],
+  ['https://adblock.doh.mullvad.net/dns-query', 'eu'],
+  ['https://base.dns.mullvad.net/dns-query', 'eu'],
+  ['https://extended.dns.mullvad.net/dns-query', 'eu'],
+  ['https://all.dns.mullvad.net/dns-query', 'eu'],
+  ['https://family.dns.mullvad.net/dns-query', 'eu'],
+  ['https://freedns.controld.com/p0', 'global'],
+  ['https://freedns.controld.com/p1', 'global'],
+  ['https://freedns.controld.com/p2', 'global'],
+  ['https://freedns.controld.com/p3', 'global'],
+  ['https://freedns.controld.com/family', 'global'],
+  ['https://freedns.controld.com/uncensored', 'global'],
+  ['https://sky.rethinkdns.com/dns-query', 'global'],
+  ['https://doh.cleanbrowsing.org/doh/security-filter/', 'global'],
+  ['https://doh.cleanbrowsing.org/doh/adult-filter/', 'global'],
+  ['https://doh.cleanbrowsing.org/doh/family-filter/', 'global'],
+  ['https://zero.dns0.eu/dns-query', 'eu'],
+  ['https://kids.dns0.eu/dns-query', 'eu'],
+  ['https://private.canadianshield.cira.ca/dns-query', 'na'],
+  ['https://protected.canadianshield.cira.ca/dns-query', 'na'],
+  ['https://family.canadianshield.cira.ca/dns-query', 'na'],
+  ['https://protective.joindns4.eu/dns-query', 'eu'],
+  ['https://child.joindns4.eu/dns-query', 'eu'],
+  ['https://noads.joindns4.eu/dns-query', 'eu'],
+  ['https://child-noads.joindns4.eu/dns-query', 'eu'],
+  ['https://unfiltered.joindns4.eu/dns-query', 'eu'],
+  ['https://wikimedia-dns.org/dns-query', 'global'],
+  ['https://doh.wikimedia.org/dns-query', 'global'],
+  ['https://dns.switch.ch/dns-query', 'eu'],
+  ['https://dns.digitale-gesellschaft.ch/dns-query', 'eu'],
+  ['https://doh.libredns.gr/dns-query', 'eu'],
+  ['https://doh.libredns.gr/noads', 'eu'],
+  ['https://odvr.nic.cz/dns-query', 'eu'],
+  ['https://doh.ffmuc.net/dns-query', 'eu'],
+  ['https://doh.applied-privacy.net/query', 'eu'],
+  ['https://dns.aa.net.uk/dns-query', 'eu'],
+  ['https://dns.alidns.com/dns-query', 'asia'],
+  ['https://dns.twnic.tw/dns-query', 'asia'],
+  ['https://dns.pub/dns-query', 'asia'],
+  ['https://doh.360.cn/dns-query', 'asia'],
+  ['https://public.dns.iij.jp/dns-query', 'asia'],
+  ['https://doh.dns.sb/dns-query', 'global'],
+  ['https://doh.pub/dns-query', 'global'],
+  ['https://ordns.he.net/dns-query', 'global'],
+  ['https://dns.brahma.world/dns-query', 'global'],
+  ['https://dns.cfiec.net/dns-query', 'global'],
+  ['https://dns.dnshome.de/dns-query', 'eu'],
+  ['https://dnsforge.de/dns-query', 'eu'],
+  ['https://clean.dnsforge.de/dns-query', 'eu'],
+  ['https://hard.dnsforge.de/dns-query', 'eu'],
+  ['https://doh-fi.blahdns.com/dns-query', 'eu'],
+  ['https://doh-jp.blahdns.com/dns-query', 'asia'],
+  ['https://doh-de.blahdns.com/dns-query', 'eu'],
+  ['https://doh-sg.blahdns.com/dns-query', 'asia'],
+  ['https://doh.centraleu.pi-dns.com/dns-query', 'eu'],
+  ['https://doh.westus.pi-dns.com/dns-query', 'na'],
+  ['https://doh.eastus.pi-dns.com/dns-query', 'na'],
+  ['https://doh.northeu.pi-dns.com/dns-query', 'eu'],
+  ['https://doh.tiar.app/dns-query', 'asia'],
+  ['https://doh.tiarap.org/dns-query', 'asia'],
+  ['https://jp.tiar.app/dns-query', 'asia'],
+  ['https://jp.tiarap.org/dns-query', 'asia'],
+  ['https://dns.containerpi.com/dns-query', 'global'],
+  ['https://dns.rubyfish.cn/dns-query', 'asia'],
+  ['https://doh.armadillodns.net/dns-query', 'global'],
+  ['https://commons.host/dns-query', 'global'],
+  ['https://doh.crypto.sx/dns-query', 'global'],
+  ['https://dns.dnswarden.com/uncensored', 'global'],
+  ['https://resolver-eu.lelux.fi/dns-query', 'eu'],
+  ['https://doh.bortzmeyer.fr/dns-query', 'eu'],
+  ['https://dns.oszx.co/dns-query', 'global'],
+  ['https://ada.openbld.net/dns-query', 'global'],
+  ['https://ric.openbld.net/dns-query', 'global'],
+  ['https://luna.openbld.net/dns-query', 'global'],
+  ['https://fra01.dnscry.pt/dns-query', 'eu'],
+  ['https://lon01.dnscry.pt/dns-query', 'eu'],
+  ['https://nyc01.dnscry.pt/dns-query', 'na'],
+  ['https://par01.dnscry.pt/dns-query', 'eu'],
+  ['https://ams01.dnscry.pt/dns-query', 'eu'],
+  ['https://sin01.dnscry.pt/dns-query', 'asia'],
+  ['https://syd01.dnscry.pt/dns-query', 'oceania'],
+  ['https://tok01.dnscry.pt/dns-query', 'asia'],
+  ['https://sea01.dnscry.pt/dns-query', 'na'],
+  ['https://lax01.dnscry.pt/dns-query', 'na'],
+  ['https://anycast.uncensoreddns.org/dns-query', 'global'],
+  ['https://unicast.uncensoreddns.org/dns-query', 'global'],
+  ['https://dns.njal.la/dns-query', 'eu'],
+  ['https://freedom.mydns.network/dns-query', 'global'],
+  ['https://paranoia.mydns.network/dns-query', 'global'],
+  ['https://adblock.mydns.network/dns-query', 'global'],
+  ['https://family.mydns.network/dns-query', 'global'],
+  ['https://dns.comss.one/dns-query', 'global'],
+  ['https://router.comss.one/dns-query', 'global'],
+  ['https://ca01.dns4me.net', 'na'],
+  ['https://ca02.dns4me.net', 'na'],
+  ['https://us01.dns4me.net', 'na'],
+  ['https://us02.dns4me.net', 'na'],
+  ['https://uk01.dns4me.net', 'eu'],
+  ['https://au01.dns4me.net', 'oceania'],
+  ['https://sg01.dns4me.net', 'asia'],
+  ['https://de01.dns4me.net', 'eu'],
+  ['https://dnspub.restena.lu/dns-query', 'eu'],
+  ['https://safeservedns.com/dns-query', 'global'],
+  ['https://dns.rabbitdns.org/dns-query', 'global'],
+  ['https://security.rabbitdns.org/dns-query', 'global'],
+  ['https://family.rabbitdns.org/dns-query', 'global'],
+  ['https://v.recipes/dns-query', 'global'],
+  ['https://v.recipes/dns-adblock', 'global'],
+  ['https://v.recipes/dns-ecs', 'global'],
+  ['https://dns.surfsharkdns.com/dns-query', 'global'],
+  ['https://dns.blokada.org/dns-query', 'global'],
+  ['https://root.hagezi.org/dns-query', 'eu'],
+  ['https://wurzn.hagezi.org/dns-query', 'eu'],
+  ['https://juuri.hagezi.org/dns-query', 'eu'],
+  ['https://eu1.dns.lavate.ch/dns-query', 'eu'],
+  ['https://doh.seby.io/dns-query', 'oceania'],
+  ['https://resolver1.absolight.net/dns-query', 'eu'],
+  ['https://resolver2.absolight.net/dns-query', 'eu'],
+  ['https://per.adfilter.net/dns-query', 'oceania'],
+  ['https://syd.adfilter.net/dns-query', 'oceania'],
+  ['https://adl.adfilter.net/dns-query', 'oceania'],
+  ['https://ns0.fdn.fr/dns-query', 'eu'],
+  ['https://ns1.fdn.fr/dns-query', 'eu'],
+  ['https://dns.technitium.com/dns-query', 'global'],
+  ['https://dns.telekom.de/dns-query', 'eu'],
+  ['https://dns.aquilenet.fr/dns-query', 'eu'],
+  ['https://doh.lacontrevoie.fr/dns-query', 'eu'],
+  ['https://dns.belnet.be/dns-query', 'eu'],
+  ['https://dns1.in-berlin.de/dns-query', 'eu'],
+  ['https://dns2.in-berlin.de/dns-query', 'eu'],
+  ['https://resolver.dnsprivacy.org.uk/dns-query', 'eu'],
+  ['https://resolver.sunet.se/dns-query', 'eu'],
+  ['https://ns1.opennameserver.org/dns-query', 'global'],
+  ['https://dns.froth.zone/dns-query', 'global'],
+  ['https://dns.stormycloud.org/dns-query', 'global'],
+  ['https://adfree.usableprivacy.net/dns-query', 'na'],
+  ['https://doh.dns4all.eu/dns-query', 'eu'],
+  ['https://dns.smartguard.io/dns-query', 'global'],
+  ['https://privacy.plumedns.com/dns-query', 'global'],
+  ['https://dns.bitdefender.net/dns-query', 'global'],
+  ['https://dns.cctld.kg/dns-query', 'asia'],
+  ['https://doh.lv/dns-query', 'eu'],
+  ['https://doh.nic.lv/dns-query', 'eu'],
+  ['https://japan.dnsovertor.cc/dns-query', 'asia'],
+  ['https://chuncheon.dnsovertor.cc/dns-query', 'asia'],
+  ['https://seoul.dnsovertor.cc/dns-query', 'asia'],
+  ['https://dns.cert.ee/dns-query', 'eu'],
+  ['https://secure.hafnova.com/dns-query', 'global'],
+  ['https://dns.kescher.at/dns-query', 'eu'],
+  ['https://ibuki.cgnat.net/dns-query', 'global'],
+  ['https://doh.li/dns-query', 'global'],
+  ['https://dns4eu.online/dns-query', 'eu'],
+  ['https://dns.elemental.software/dns-query', 'global'],
+  ['https://doth.huque.com/dns-query', 'global'],
+  ['https://zdn.ro/dns-query', 'eu'],
+  ['https://doh.zknt.org/dns-query', 'global'],
+  ['https://ns2.4netguides.org/dns-query', 'global'],
+  ['https://dukun.de/dns-query', 'eu'],
+  ['https://dns.cynthialabs.net/dns-query', 'global'],
+  ['https://doh.la.ahadns.net/dns-query', 'na'],
+  ['https://doh.ny.ahadns.net/dns-query', 'na'],
+  ['https://doh.nl.ahadns.net/dns-query', 'eu'],
+  ['https://doh.pl.ahadns.net/dns-query', 'eu'],
+  ['https://doh.in.ahadns.net/dns-query', 'asia'],
+  ['https://doh.sg.ahadns.net/dns-query', 'asia'],
+  ['https://doh.au.ahadns.net/dns-query', 'oceania'],
+  ['https://dnslow.me/dns-query', 'global'],
+  ['https://dns.dns-over-https.com/dns-query', 'global'],
+  ['https://doh.nic.fr/dns-query', 'eu'],
+  ['https://dns.decloudus.com/dns-query', 'eu'],
+  ['https://dns.flatuslifir.is/dns-query', 'eu'],
+  ['https://dns.paesa.es/dns-query', 'eu'],
+  ['https://jcdns.pikapods.com/dns-query', 'global'],
+];
+
+function createProvider(url, region) {
+  return {
+    url,
+    region,
+    healthScore: 100,
+    lastCheck: 0,
+    consecutiveFailures: 0,
+    avgResponseTime: 0,
+    successCount: 0,
+    totalRequests: 0,
+    circuitState: 'closed',
+    lastCircuitOpen: 0,
+  };
+}
+
+const UPSTREAM_DNS_PROVIDERS = UPSTREAM_DNS_LIST.map(([url, region]) => createProvider(url, region));
+
+// Obscure, single-operator endpoints that are unlikely to appear on
+// censor blocklists. They get a score bonus when the network looks hostile
+// (most upstreams failing).
+const STEALTH_PROVIDERS = new Set([
+  'https://doh.crypto.sx/dns-query',
+  'https://dns.oszx.co/dns-query',
+  'https://ibuki.cgnat.net/dns-query',
+  'https://doh.li/dns-query',
+  'https://dnslow.me/dns-query',
+  'https://jcdns.pikapods.com/dns-query',
+  'https://dns.elemental.software/dns-query',
+  'https://doh.zknt.org/dns-query',
+  'https://commons.host/dns-query',
+  'https://dns.containerpi.com/dns-query',
+  'https://v.recipes/dns-query',
+  'https://doh.seby.io/dns-query',
+  'https://dns4eu.online/dns-query',
+  'https://zdn.ro/dns-query',
+  'https://doth.huque.com/dns-query',
+  'https://ns2.4netguides.org/dns-query',
+  'https://dukun.de/dns-query',
+  'https://dns.cynthialabs.net/dns-query',
+  'https://doh.bortzmeyer.fr/dns-query',
+  'https://resolver-eu.lelux.fi/dns-query',
+  'https://dns.dnswarden.com/uncensored',
+  'https://doh.armadillodns.net/dns-query',
+  'https://dns.comss.one/dns-query',
+  'https://router.comss.one/dns-query',
+  'https://dns.dns-over-https.com/dns-query',
+  'https://secure.hafnova.com/dns-query',
+]);
+
+// ===== State =====
 const dnsCache = new Map();
 const negativeDnsCache = new Map();
 const rateLimitMap = new Map();
@@ -227,6 +293,9 @@ let lastHealthCheck = Date.now();
 let lastAdaptiveLearning = Date.now();
 let concurrentRequests = 0;
 let globalRequestCount = 0;
+// Rolling upstream outcome stats for hostile-network detection.
+let recentUpstreamFailures = 0;
+let recentUpstreamTotal = 0;
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -242,27 +311,8 @@ const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OPR/117.0.0.0'
 ];
 
-const ACCEPT_HEADERS = [
-  'application/dns-message',
-  'application/dns-json',
-  '*/*',
-  'application/dns-message, application/dns-json',
-  'application/dns-message;q=0.9, */*;q=0.8'
-];
-
-const ADDITIONAL_HEADERS = [
-  { 'X-Request-ID': () => crypto.randomUUID() },
-  { 'X-Client-Version': () => `DoH/${Math.floor(Math.random() * 10) + 1}.${Math.floor(Math.random() * 10)}` },
-  { 'Accept-Language': () => ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en;q=0.8'][Math.floor(Math.random() * 3)] },
-  { 'Sec-CH-UA': () => `"Chromium";v="${120 + Math.floor(Math.random() * 10)}", "Google Chrome";v="${120 + Math.floor(Math.random() * 10)}"` }
-];
-
 function getRandomUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
-
-function getRandomAcceptHeader() {
-  return ACCEPT_HEADERS[Math.floor(Math.random() * ACCEPT_HEADERS.length)];
 }
 
 function getAdaptiveTimeout(provider) {
@@ -294,15 +344,14 @@ function getClientRegion(cfData) {
   if (!cfData || !cfData.country) return 'global';
   const country = cfData.country;
   if (['US', 'CA', 'MX'].includes(country)) return 'na';
-  if (['CN', 'JP', 'KR', 'SG', 'TW', 'IN'].includes(country)) return 'asia';
-  if (['GB', 'DE', 'FR', 'IT', 'ES', 'NL', 'CH', 'SE', 'NO', 'FI', 'PL', 'CZ'].includes(country)) return 'eu';
+  if (['CN', 'JP', 'KR', 'SG', 'TW', 'IN', 'TH', 'MY', 'ID', 'PH', 'VN', 'HK', 'IR', 'SA', 'AE', 'QA', 'KW', 'TR', 'EG', 'IQ'].includes(country)) return 'asia';
+  if (['GB', 'DE', 'FR', 'IT', 'ES', 'NL', 'CH', 'SE', 'NO', 'FI', 'PL', 'CZ', 'AT', 'BE', 'DK', 'PT', 'IE', 'GR', 'HU', 'RO'].includes(country)) return 'eu';
   if (['AU', 'NZ'].includes(country)) return 'oceania';
-  if (['BR', 'AR', 'CL'].includes(country)) return 'sa';
+  if (['BR', 'AR', 'CL', 'CO', 'PE'].includes(country)) return 'sa';
   return 'global';
 }
 
-function calculateProviderScore(provider, clientRegion = 'global') {
-  const now = Date.now();
+function calculateProviderScore(provider, clientRegion = 'global', now = Date.now()) {
   const timeSinceLastCheck = now - provider.lastCheck;
   const healthWeight = 0.35;
   const speedWeight = 0.30;
@@ -321,8 +370,7 @@ function calculateProviderScore(provider, clientRegion = 'global') {
 
   let reliabilityScore = 100;
   if (provider.totalRequests > 10) {
-    const successRate = (provider.successCount / provider.totalRequests) * 100;
-    reliabilityScore = successRate;
+    reliabilityScore = (provider.successCount / provider.totalRequests) * 100;
   }
 
   let regionScore = 50;
@@ -340,17 +388,23 @@ function calculateProviderScore(provider, clientRegion = 'global') {
                     (regionScore * regionWeight) -
                     freshnessPenalty;
 
-  return Math.max(0, Math.min(100, totalScore));
+  // Hostile-network adaptation: when most upstreams are failing (severe
+  // filtering), prefer obscure providers unlikely to be blocklisted.
+  const finalScore = (isHostileNetwork() && STEALTH_PROVIDERS.has(provider.url))
+    ? totalScore + STEALTH_SCORE_BONUS
+    : totalScore;
+
+  return Math.max(0, Math.min(100, finalScore));
 }
 
 function selectBestProviders(count, clientRegion = 'global') {
+  const now = Date.now();
   const healthyProviders = UPSTREAM_DNS_PROVIDERS.filter(p =>
-    p.healthScore > 25 &&
-    p.consecutiveFailures < CIRCUIT_BREAKER_THRESHOLD &&
-    checkCircuitBreaker(p)
+    p.healthScore > 25 && checkCircuitBreaker(p)
   );
 
   if (healthyProviders.length === 0) {
+    // All providers look dead — reset and give everyone another chance.
     UPSTREAM_DNS_PROVIDERS.forEach(p => {
       p.healthScore = 100;
       p.consecutiveFailures = 0;
@@ -361,11 +415,12 @@ function selectBestProviders(count, clientRegion = 'global') {
 
   const scoredProviders = healthyProviders.map(provider => ({
     provider,
-    score: calculateProviderScore(provider, clientRegion)
+    score: calculateProviderScore(provider, clientRegion, now)
   }));
 
   scoredProviders.sort((a, b) => b.score - a.score);
 
+  // Slight randomization among the top pool for load diversity.
   const diversityPool = scoredProviders.slice(0, Math.min(25, scoredProviders.length));
   const randomIndex = Math.floor(Math.random() * Math.min(8, diversityPool.length));
   if (randomIndex > 0 && diversityPool[randomIndex]) {
@@ -396,6 +451,22 @@ function updateProviderMetrics(provider, success, responseTime) {
     provider.consecutiveFailures++;
     provider.healthScore = Math.max(0, provider.healthScore - 12);
   }
+}
+
+// Rolling stats: is the network hostile (most upstreams failing)?
+function recordUpstreamOutcome(success) {
+  recentUpstreamTotal++;
+  if (!success) recentUpstreamFailures++;
+  // Decay so old history doesn't pin the state forever.
+  if (recentUpstreamTotal >= 100) {
+    recentUpstreamTotal = Math.floor(recentUpstreamTotal / 2);
+    recentUpstreamFailures = Math.floor(recentUpstreamFailures / 2);
+  }
+}
+
+function isHostileNetwork() {
+  return recentUpstreamTotal >= HOSTILE_MIN_SAMPLES &&
+    (recentUpstreamFailures / recentUpstreamTotal) >= HOSTILE_FAILURE_RATIO;
 }
 
 async function performAdaptiveLearning() {
@@ -439,45 +510,136 @@ async function performHealthCheck() {
     0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d,
     0x00, 0x00, 0x01, 0x00, 0x01
-  ]);
+  ]).buffer;
 
   const providersToCheck = UPSTREAM_DNS_PROVIDERS
     .filter(p => now - p.lastCheck > HEALTH_CHECK_INTERVAL)
-    .slice(0, 12);
+    .slice(0, HEALTH_CHECK_BATCH);
 
-  const healthCheckPromises = providersToCheck.map(async (provider) => {
-    const startTime = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-      const response = await fetch(provider.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/dns-message',
-          'Accept': 'application/dns-message',
-          'User-Agent': getRandomUserAgent()
-        },
-        body: testQuery,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
-      if (response.ok) {
-        updateProviderMetrics(provider, true, responseTime);
-      } else {
-        updateProviderMetrics(provider, false, responseTime);
-      }
-    } catch (error) {
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
-    }
-  });
-
-  await Promise.allSettled(healthCheckPromises);
+  // No shape-shifting for health checks: keep them cheap.
+  await Promise.allSettled(providersToCheck.map(p => attemptProvider(p, testQuery, HEALTH_CHECK_TIMEOUT, false)));
 }
+
+// ===== DNS wire helpers =====
+
+function getQueryId(dnsQuery) {
+  return new DataView(dnsQuery).getUint16(0);
+}
+
+/** Returns a copy of the response with the DNS ID rewritten to match the client query. */
+function withQueryId(responseData, queryId) {
+  if (responseData.byteLength < 2) return responseData;
+  const out = responseData.slice(0);
+  new DataView(out).setUint16(0, queryId);
+  return out;
+}
+
+/**
+ * Parses and validates the question section of a DNS query.
+ * Returns { name, qtype, qclass } or null when the payload is not a valid
+ * single-question query.
+ */
+function parseQuestion(dnsQuery) {
+  const view = new Uint8Array(dnsQuery);
+  if (view.length < MIN_DNS_MESSAGE_SIZE) return null;
+
+  const qdcount = (view[4] << 8) | view[5];
+  if (qdcount !== 1) return null;
+
+  let offset = 12;
+  const labels = [];
+  let guard = 0;
+  while (offset < view.length && guard++ < 128) {
+    const len = view[offset];
+    if (len === 0) { offset++; break; }
+    if ((len & 0xC0) === 0xC0) return null; // compressed names not allowed in questions
+    if (len > 63 || offset + 1 + len > view.length) return null;
+    let label = '';
+    for (let i = 0; i < len; i++) {
+      label += String.fromCharCode(view[offset + 1 + i]);
+    }
+    labels.push(label.toLowerCase());
+    offset += len + 1;
+  }
+  if (guard >= 128 || offset + 4 > view.length) return null;
+
+  const qtype = (view[offset] << 8) | view[offset + 1];
+  const qclass = (view[offset + 2] << 8) | view[offset + 3];
+  return { name: labels.join('.'), qtype, qclass };
+}
+
+/** Cache key derived from the normalized question — stable across query IDs and client padding. */
+function getCacheKey(question) {
+  return `dns:${question.name}:${question.qtype}:${question.qclass}`;
+}
+
+/** Skips a (possibly compressed) domain name; returns the offset after it, or -1. */
+function skipName(view, offset, len) {
+  const bytes = new Uint8Array(view.buffer, view.byteOffset, len);
+  let pos = offset;
+  let end = -1;
+  let guard = 0;
+  while (pos < len && guard++ < 128) {
+    const b = bytes[pos];
+    if ((b & 0xC0) === 0xC0) {
+      if (end === -1) end = pos + 2;
+      pos = ((b & 0x3F) << 8) | bytes[pos + 1];
+      continue;
+    }
+    if (b === 0) {
+      return end === -1 ? pos + 1 : end;
+    }
+    pos += b + 1;
+  }
+  return -1;
+}
+
+/** Minimum TTL across all answer RRs (proper record walking, not a fixed offset). */
+function extractMinTTL(dnsResponse) {
+  try {
+    const view = new DataView(dnsResponse);
+    const len = dnsResponse.byteLength;
+    if (len < MIN_DNS_MESSAGE_SIZE) return DNS_CACHE_TTL_DEFAULT;
+
+    let offset = 12;
+    const qdcount = view.getUint16(4);
+    const ancount = view.getUint16(6);
+
+    for (let i = 0; i < qdcount; i++) {
+      offset = skipName(view, offset, len);
+      if (offset < 0 || offset + 4 > len) return DNS_CACHE_TTL_DEFAULT;
+      offset += 4; // QTYPE + QCLASS
+    }
+
+    let minTTL = Infinity;
+    for (let i = 0; i < ancount; i++) {
+      offset = skipName(view, offset, len);
+      if (offset < 0 || offset + 10 > len) break;
+      const ttl = view.getUint32(offset + 4); // NAME + TYPE(2) + CLASS(2), then TTL(4)
+      const rdlength = view.getUint16(offset + 8);
+      if (ttl < minTTL) minTTL = ttl;
+      offset += 10 + rdlength;
+    }
+
+    if (minTTL === Infinity) return DNS_CACHE_TTL_DEFAULT;
+    return Math.max(0, Math.min(minTTL, DNS_CACHE_TTL_MAX));
+  } catch (e) {
+    return DNS_CACHE_TTL_DEFAULT;
+  }
+}
+
+function isNXDOMAIN(dnsResponse) {
+  try {
+    const view = new DataView(dnsResponse);
+    const flags = view.getUint16(2);
+    const rcode = flags & 0x000F;
+    return rcode === 3;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ===== Query mutation: padding (RFC 8467) + ECS stripping =====
 
 function applyDnsPadding(dnsQuery) {
   if (!DNS_PADDING_ENABLED) return dnsQuery;
@@ -635,173 +797,197 @@ function stripECS(dnsQuery) {
   }
 }
 
-function buildEnhancedHeaders(baseHeaders) {
-  const headers = { ...baseHeaders };
+// ===== Upstream request plumbing =====
 
+function buildUpstreamHeaders() {
+  const headers = {
+    'Content-Type': 'application/dns-message',
+    'Accept': 'application/dns-message',
+    'User-Agent': getRandomUserAgent(),
+  };
+  // Occasional request ID makes per-request tracing possible without
+  // fingerprinting the client.
   if (Math.random() < 0.4) {
-    const randomHeader = ADDITIONAL_HEADERS[Math.floor(Math.random() * ADDITIONAL_HEADERS.length)];
-    const headerKey = Object.keys(randomHeader)[0];
-    const headerValue = randomHeader[headerKey]();
-    headers[headerKey] = headerValue;
+    headers['X-Request-ID'] = crypto.randomUUID();
   }
-
-  if (Math.random() < 0.25) {
-    headers['X-Forwarded-For'] = `${Math.floor(Math.random() * 223) + 1}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
-  }
-
   return headers;
 }
 
-async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
-  let processedQuery = applyDnsPadding(dnsQuery);
-  processedQuery = stripECS(processedQuery);
+function base64UrlEncode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
-  const selectedProviders = selectBestProviders(PARALLEL_RACING_COUNT, clientRegion);
+async function doUpstreamFetch(provider, body, timeout, method) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-  const racePromises = selectedProviders.map(async (provider) => {
-    const startTime = Date.now();
-    const controller = new AbortController();
-    const adaptiveTimeout = getAdaptiveTimeout(provider);
-    const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
-
-    try {
-      const requestHeaders = buildEnhancedHeaders({
-        'Content-Type': 'application/dns-message',
-        'Accept': getRandomAcceptHeader(),
-        'User-Agent': getRandomUserAgent(),
-        'Cache-Control': 'no-cache',
-        'DNT': '1'
-      });
-
-      const response = await fetch(provider.url, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: processedQuery,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
-      if (!response.ok) {
-        updateProviderMetrics(provider, false, responseTime);
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const responseData = await response.arrayBuffer();
-
-      if (responseData.byteLength > MAX_DNS_RESPONSE_SIZE) {
-        updateProviderMetrics(provider, false, responseTime);
-        throw new Error('Response too large');
-      }
-
-      updateProviderMetrics(provider, true, responseTime);
-
-      return {
-        data: responseData,
-        provider: provider.url,
-        responseTime: responseTime
-      };
-
-    } catch (error) {
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
-      throw error;
+  try {
+    let targetUrl = provider.url;
+    let fetchBody;
+    if (method === 'GET') {
+      const sep = provider.url.includes('?') ? '&' : '?';
+      targetUrl += sep + 'dns=' + base64UrlEncode(body);
+    } else {
+      fetchBody = body;
     }
-  });
 
+    const response = await fetch(targetUrl, {
+      method,
+      headers: buildUpstreamHeaders(),
+      body: fetchBody,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.arrayBuffer();
+
+    if (data.byteLength < MIN_DNS_MESSAGE_SIZE || data.byteLength > MAX_DNS_RESPONSE_SIZE) {
+      throw new Error('Invalid response size');
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Single upstream attempt. Updates provider metrics EXACTLY once —
+ * on success or on any failure (timeout, HTTP error, bad payload).
+ *
+ * Shape-shifting: if the POST fails, the provider is retried once via
+ * GET ?dns= — some filters only block one of the two DoH shapes.
+ * A failure faster than FAST_FAIL_THRESHOLD_MS (RST/refused/DNS error)
+ * smells like blocking rather than congestion, so it is penalized harder.
+ */
+async function attemptProvider(provider, body, timeoutOverride, allowShapeShift = true) {
+  const startTime = Date.now();
+  const timeout = timeoutOverride !== undefined ? timeoutOverride : getAdaptiveTimeout(provider);
+
+  try {
+    let data;
+    try {
+      data = await doUpstreamFetch(provider, body, timeout, 'POST');
+    } catch (postError) {
+      if (!SHAPESHIFT_GET_RETRY || !allowShapeShift) throw postError;
+      data = await doUpstreamFetch(provider, body, timeout, 'GET');
+    }
+
+    const responseTime = Date.now() - startTime;
+    updateProviderMetrics(provider, true, responseTime);
+
+    return {
+      data,
+      provider: provider.url,
+      responseTime
+    };
+  } catch (error) {
+    const elapsed = Date.now() - startTime;
+    updateProviderMetrics(provider, false, elapsed);
+    if (elapsed < FAST_FAIL_THRESHOLD_MS) {
+      provider.healthScore = Math.max(0, provider.healthScore - 15);
+      provider.consecutiveFailures++;
+    }
+    throw error;
+  }
+}
+
+async function raceProviders(providers, dnsQuery) {
+  const racePromises = providers.map(provider => attemptProvider(provider, dnsQuery));
   return Promise.any(racePromises);
 }
 
-async function fallbackProviderRequest(dnsQuery, headers, excludeProviders = [], clientRegion = 'global') {
+async function fallbackProviderRequest(dnsQuery, excludeProviders = [], clientRegion = 'global') {
+  const now = Date.now();
   const availableProviders = UPSTREAM_DNS_PROVIDERS
     .filter(p =>
       !excludeProviders.includes(p.url) &&
       p.healthScore > 15 &&
       checkCircuitBreaker(p)
     )
-    .sort((a, b) => calculateProviderScore(b, clientRegion) - calculateProviderScore(a, clientRegion))
-    .slice(0, 8);
+    .sort((a, b) => calculateProviderScore(b, clientRegion, now) - calculateProviderScore(a, clientRegion, now))
+    .slice(0, FALLBACK_PROVIDER_COUNT);
 
-  for (const provider of availableProviders) {
-    const startTime = Date.now();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FALLBACK_TIMEOUT);
-
+  // Parallel batches instead of one-by-one: under severe filtering a long
+  // sequential chain would blow the Worker time limit.
+  let lastError = null;
+  for (let i = 0; i < availableProviders.length; i += FALLBACK_BATCH_SIZE) {
+    const batch = availableProviders.slice(i, i + FALLBACK_BATCH_SIZE);
     try {
-      const requestHeaders = buildEnhancedHeaders({
-        'Content-Type': 'application/dns-message',
-        'Accept': 'application/dns-message',
-        'User-Agent': getRandomUserAgent()
-      });
-
-      const response = await fetch(provider.url, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: dnsQuery,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
-      if (response.ok) {
-        const responseData = await response.arrayBuffer();
-        updateProviderMetrics(provider, true, responseTime);
-        return {
-          data: responseData,
-          provider: provider.url,
-          responseTime: responseTime
-        };
-      }
-
-      updateProviderMetrics(provider, false, responseTime);
-    } catch (error) {
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
+      return await Promise.any(batch.map(p => attemptProvider(p, dnsQuery, FALLBACK_TIMEOUT)));
+    } catch (batchError) {
+      lastError = batchError;
     }
   }
 
-  throw new Error('All fallback providers failed');
+  throw lastError || new Error('All fallback providers failed');
 }
 
-function getCacheKey(dnsQuery) {
-  const view = new Uint8Array(dnsQuery);
-  let hash = 2166136261;
-  for (let i = 4; i < view.length; i++) {
-    hash ^= view[i];
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return `dns_${hash}`;
-}
+// ===== Caching =====
 
 function getCachedResponse(cacheKey) {
   const cached = dnsCache.get(cacheKey);
   if (!cached) return null;
 
-  if (Date.now() - cached.timestamp > cached.ttl * 1000) {
+  const age = Date.now() - cached.timestamp;
+  if (age > cached.ttl * 1000) {
+    // Expired: keep it for the stale-serving grace period, drop only after.
+    if (age > (cached.ttl + STALE_CACHE_GRACE_PERIOD) * 1000) {
+      dnsCache.delete(cacheKey);
+    }
+    return null;
+  }
+
+  return cached;
+}
+
+/**
+ * Returns an expired-but-usable entry for stale-while-dead serving:
+ * when every upstream is unreachable (severe filtering), an old answer
+ * is better than no answer.
+ */
+function getStaleResponse(cacheKey) {
+  const cached = dnsCache.get(cacheKey);
+  if (!cached) return null;
+
+  const age = Date.now() - cached.timestamp;
+  if (age <= cached.ttl * 1000) return null; // fresh entries are not "stale"
+  if (age > (cached.ttl + STALE_CACHE_GRACE_PERIOD) * 1000) {
     dnsCache.delete(cacheKey);
     return null;
   }
 
-  return cached.response;
+  return cached;
+}
+
+function evictOldest(map, count) {
+  // Map preserves insertion order: the first keys are the oldest inserted.
+  let n = 0;
+  for (const key of map.keys()) {
+    map.delete(key);
+    if (++n >= count) break;
+  }
 }
 
 function setCachedResponse(cacheKey, response, ttl = DNS_CACHE_TTL_DEFAULT) {
   const finalTTL = Math.max(DNS_CACHE_TTL_MIN, Math.min(DNS_CACHE_TTL_MAX, ttl));
   dnsCache.set(cacheKey, {
-    response: response,
+    response,
     timestamp: Date.now(),
     ttl: finalTTL
   });
 
-  if (dnsCache.size > 8000) {
-    const sortedEntries = Array.from(dnsCache.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp);
-    const toDelete = sortedEntries.slice(0, 2000);
-    toDelete.forEach(([key]) => dnsCache.delete(key));
+  if (dnsCache.size > DNS_CACHE_MAX) {
+    evictOldest(dnsCache, DNS_CACHE_EVICT_BATCH);
   }
 }
 
@@ -814,57 +1000,21 @@ function checkNegativeCache(cacheKey) {
     return null;
   }
 
-  return cached.response;
+  return cached;
 }
 
 function setNegativeCache(cacheKey, response) {
   negativeDnsCache.set(cacheKey, {
-    response: response,
+    response,
     timestamp: Date.now()
   });
 
-  if (negativeDnsCache.size > 2000) {
-    const oldestKeys = Array.from(negativeDnsCache.keys()).slice(0, 500);
-    oldestKeys.forEach(key => negativeDnsCache.delete(key));
+  if (negativeDnsCache.size > NEGATIVE_CACHE_MAX) {
+    evictOldest(negativeDnsCache, NEGATIVE_CACHE_EVICT_BATCH);
   }
 }
 
-function isNXDOMAIN(dnsResponse) {
-  try {
-    const view = new DataView(dnsResponse);
-    const flags = view.getUint16(2);
-    const rcode = flags & 0x000F;
-    return rcode === 3;
-  } catch (e) {
-    return false;
-  }
-}
-
-function extractTTL(dnsResponse) {
-  try {
-    const view = new DataView(dnsResponse);
-    let offset = 12;
-    const qdcount = view.getUint16(4);
-
-    for (let i = 0; i < qdcount; i++) {
-      while (offset < dnsResponse.byteLength && view.getUint8(offset) !== 0) {
-        const len = view.getUint8(offset);
-        if (len > 63) break;
-        offset += len + 1;
-      }
-      offset += 5;
-    }
-
-    if (offset + 10 < dnsResponse.byteLength) {
-      offset += 10;
-      const ttl = view.getUint32(offset);
-      return Math.min(ttl, DNS_CACHE_TTL_MAX);
-    }
-  } catch (e) {
-    return DNS_CACHE_TTL_DEFAULT;
-  }
-  return DNS_CACHE_TTL_DEFAULT;
-}
+// ===== Rate limiting =====
 
 function isRateLimited(clientIP) {
   const now = Date.now();
@@ -903,15 +1053,82 @@ function buildCORSHeaders(origin) {
   };
 }
 
+// ===== DNS-over-HTTPS JSON API (RFC 8427) =====
+// Uses the scored provider pool instead of a single hardcoded upstream.
+
+async function handleJsonQuery(url, corsHeaders, clientRegion) {
+  const name = url.searchParams.get('name');
+  const type = url.searchParams.get('type') || 'A';
+
+  if (!name || name.length > 253) {
+    return new Response(JSON.stringify({ Status: 2 }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/dns-json' }
+    });
+  }
+
+  const params = new URLSearchParams({ name, type });
+  const doParam = url.searchParams.get('do');
+  const cdParam = url.searchParams.get('cd');
+  if (doParam) params.set('do', doParam);
+  if (cdParam) params.set('cd', cdParam);
+  const queryString = params.toString();
+
+  const providers = selectBestProviders(3, clientRegion);
+
+  const races = providers.map(async (provider) => {
+    const startTime = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RACE_TIMEOUT);
+    try {
+      const sep = provider.url.includes('?') ? '&' : '?';
+      const response = await fetch(provider.url + sep + queryString, {
+        headers: {
+          'Accept': 'application/dns-json',
+          'User-Agent': getRandomUserAgent()
+        },
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      updateProviderMetrics(provider, true, Date.now() - startTime);
+      return json;
+    } catch (error) {
+      updateProviderMetrics(provider, false, Date.now() - startTime);
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  });
+
+  try {
+    const jsonData = await Promise.any(races);
+    return new Response(JSON.stringify(jsonData), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/dns-json', 'X-Cache': 'MISS' }
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ Status: 2 }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/dns-json' }
+    });
+  }
+}
+
+// ===== Main DNS handler =====
+
 async function handleDNSQuery(request) {
   const url = new URL(request.url);
-  const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const forwarded = request.headers.get('X-Forwarded-For');
+  const clientIP = request.headers.get('CF-Connecting-IP') ||
+    (forwarded ? forwarded.split(',')[0].trim() : null) ||
+    'unknown';
   const cfData = request.cf || {};
   const clientRegion = getClientRegion(cfData);
   const origin = request.headers.get('Origin');
   const corsHeaders = buildCORSHeaders(origin);
-  const acceptHeader = request.headers.get('Accept') || '';
-  const wantsJSON = acceptHeader.includes('application/dns-json');
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -924,9 +1141,14 @@ async function handleDNSQuery(request) {
         ...corsHeaders,
         'Retry-After': '60',
         'Content-Type': 'text/plain',
-        'X-Rate-Limit': `${RATE_LIMIT_REQUESTS}/${RATE_LIMIT_WINDOW/1000}s`
+        'X-Rate-Limit': `${RATE_LIMIT_REQUESTS}/${RATE_LIMIT_WINDOW / 1000}s`
       }
     });
+  }
+
+  // JSON API: GET without the `dns` parameter.
+  if (request.method === 'GET' && !url.searchParams.get('dns')) {
+    return handleJsonQuery(url, corsHeaders, clientRegion);
   }
 
   let dnsQuery;
@@ -936,35 +1158,6 @@ async function handleDNSQuery(request) {
   } else if (request.method === 'GET') {
     const dnsParam = url.searchParams.get('dns');
     if (!dnsParam) {
-      if (wantsJSON) {
-        const name = url.searchParams.get('name');
-        const type = url.searchParams.get('type') || 'A';
-        if (name) {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), RACE_TIMEOUT);
-          try {
-            const cfUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
-            const resp = await fetch(cfUrl, {
-              headers: { 'Accept': 'application/dns-json', 'User-Agent': getRandomUserAgent() },
-              signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            if (resp.ok) {
-              const jsonData = await resp.json();
-              return new Response(JSON.stringify(jsonData), {
-                status: 200,
-                headers: { ...corsHeaders, 'Content-Type': 'application/dns-json', 'X-Cache': 'MISS' }
-              });
-            }
-          } catch (e) {
-            clearTimeout(timeoutId);
-          }
-          return new Response(JSON.stringify({ Status: 2 }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/dns-json' }
-          });
-        }
-      }
       return new Response('Missing dns parameter', { status: 400, headers: corsHeaders });
     }
     try {
@@ -982,6 +1175,13 @@ async function handleDNSQuery(request) {
     return new Response('Request too large', { status: 413, headers: corsHeaders });
   }
 
+  // Reject anything that is not a well-formed single-question DNS query.
+  const question = parseQuestion(dnsQuery);
+  if (!question) {
+    return new Response('Invalid DNS query', { status: 400, headers: corsHeaders });
+  }
+  const queryId = getQueryId(dnsQuery);
+
   if (concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
     return new Response('Server busy', { status: 503, headers: corsHeaders });
   }
@@ -989,15 +1189,15 @@ async function handleDNSQuery(request) {
   concurrentRequests++;
   globalRequestCount++;
 
+  const cacheKey = getCacheKey(question);
+
   try {
     performHealthCheck().catch(() => {});
     performAdaptiveLearning().catch(() => {});
 
-    const cacheKey = getCacheKey(dnsQuery);
-
     const negativeCached = checkNegativeCache(cacheKey);
     if (negativeCached) {
-      return new Response(negativeCached, {
+      return new Response(withQueryId(negativeCached.response, queryId), {
         status: 200,
         headers: {
           ...corsHeaders,
@@ -1011,12 +1211,12 @@ async function handleDNSQuery(request) {
 
     const cachedResponse = getCachedResponse(cacheKey);
     if (cachedResponse) {
-      return new Response(cachedResponse, {
+      return new Response(withQueryId(cachedResponse.response, queryId), {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/dns-message',
-          'Cache-Control': `public, max-age=${DNS_CACHE_TTL_DEFAULT}`,
+          'Cache-Control': `public, max-age=${cachedResponse.ttl}`,
           'X-Cache': 'HIT',
           'X-Provider': 'cache',
           'X-Client-Region': clientRegion
@@ -1027,12 +1227,12 @@ async function handleDNSQuery(request) {
     if (pendingRequests.has(cacheKey)) {
       try {
         const coalescedResult = await pendingRequests.get(cacheKey);
-        return new Response(coalescedResult.data, {
+        return new Response(withQueryId(coalescedResult.data, queryId), {
           status: 200,
           headers: {
             ...corsHeaders,
             'Content-Type': 'application/dns-message',
-            'Cache-Control': `public, max-age=${extractTTL(coalescedResult.data)}`,
+            'Cache-Control': `public, max-age=${extractMinTTL(coalescedResult.data)}`,
             'X-Cache': 'COALESCED',
             'X-Provider': coalescedResult.provider,
             'X-Response-Time': `${coalescedResult.responseTime}ms`,
@@ -1040,11 +1240,21 @@ async function handleDNSQuery(request) {
           }
         });
       } catch (e) {
+        // The in-flight request failed; fall through and race again.
       }
     }
 
-    const requestPromise = raceMultipleProviders(dnsQuery, request.headers, clientRegion)
-      .catch(() => fallbackProviderRequest(dnsQuery, request.headers, [], clientRegion));
+    // Apply padding + ECS stripping once; race and fallback share the result.
+    let processedQuery = applyDnsPadding(dnsQuery);
+    processedQuery = stripECS(processedQuery);
+
+    const racedProviders = selectBestProviders(PARALLEL_RACING_COUNT, clientRegion);
+    const requestPromise = raceProviders(racedProviders, processedQuery)
+      .catch(() => fallbackProviderRequest(
+        processedQuery,
+        racedProviders.map(p => p.url),
+        clientRegion
+      ));
 
     pendingRequests.set(cacheKey, requestPromise);
 
@@ -1054,20 +1264,20 @@ async function handleDNSQuery(request) {
     } finally {
       pendingRequests.delete(cacheKey);
     }
+    recordUpstreamOutcome(true);
 
     if (isNXDOMAIN(result.data)) {
       setNegativeCache(cacheKey, result.data);
     } else {
-      const ttl = extractTTL(result.data);
-      setCachedResponse(cacheKey, result.data, ttl);
+      setCachedResponse(cacheKey, result.data, extractMinTTL(result.data));
     }
 
-    return new Response(result.data, {
+    return new Response(withQueryId(result.data, queryId), {
       status: 200,
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/dns-message',
-        'Cache-Control': `public, max-age=${extractTTL(result.data)}`,
+        'Cache-Control': `public, max-age=${extractMinTTL(result.data)}`,
         'X-Cache': 'MISS',
         'X-Provider': result.provider,
         'X-Response-Time': `${result.responseTime}ms`,
@@ -1076,12 +1286,31 @@ async function handleDNSQuery(request) {
     });
 
   } catch (error) {
+    recordUpstreamOutcome(false);
+
+    // Stale-while-dead: every upstream failed. If we have an expired entry
+    // within the grace period, serve it — an old answer beats no answer
+    // under severe filtering.
+    const stale = getStaleResponse(cacheKey);
+    if (stale) {
+      return new Response(withQueryId(stale.response, queryId), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/dns-message',
+          'Cache-Control': 'public, max-age=0',
+          'X-Cache': 'STALE',
+          'X-Provider': 'stale-cache',
+          'X-Client-Region': clientRegion
+        }
+      });
+    }
+
     return new Response('DNS query failed', {
       status: 502,
       headers: {
         ...corsHeaders,
-        'Content-Type': 'text/plain',
-        'X-Error': error.message
+        'Content-Type': 'text/plain'
       }
     });
   } finally {
@@ -1397,7 +1626,6 @@ function generateStatsPage() {
 </body>
 </html>`;
 }
-
 async function handleRequest(request) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -1420,6 +1648,17 @@ async function handleRequest(request) {
     return new Response(generateStatsPage(), {
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
     });
+  }
+
+  // Stealth endpoint: accept DNS queries on ANY path, not just /dns-query,
+  // so path-based blocking or fingerprinting of the DoH endpoint fails.
+  // The known pages above (/apple, /stats) keep their exact behavior.
+  if (
+    url.searchParams.has('dns') ||
+    (request.method === 'GET' && url.searchParams.has('name')) ||
+    request.method === 'POST'
+  ) {
+    return handleDNSQuery(request);
   }
 
   const baseUrl = new URL(request.url);
@@ -2095,7 +2334,7 @@ async function handleRequest(request) {
             <div class="feature-grid">
                 <div class="feature-item">
                     <div class="feature-icon">⚡</div>
-                    <div class="feature-text">Parallel DNS Racing — همزمان ۱۰ سرور برتر امتحان می‌شود و اولین پاسخ معتبر پذیرفته می‌شود</div>
+                    <div class="feature-text">Parallel DNS Racing — همزمان ۶ سرور برتر امتحان می‌شود و اولین پاسخ معتبر پذیرفته می‌شود</div>
                 </div>
                 <div class="feature-item">
                     <div class="feature-icon">🛡️</div>
@@ -2156,6 +2395,18 @@ async function handleRequest(request) {
                 <div class="feature-item">
                     <div class="feature-icon">📡</div>
                     <div class="feature-text">پشتیبانی از JSON DoH API با فرمت application/dns-json</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🕵️</div>
+                    <div class="feature-text">Stealth Endpoint — کوئری‌های DNS روی هر مسیری پذیرفته می‌شوند، نه فقط ‎/dns-query‎</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🧟</div>
+                    <div class="feature-text">Stale-while-dead — اگر همه‌ی سرورها قطع شوند، جواب‌های کش‌شده‌ی منقضی (تا ۲۴ ساعت) همچنان سرو می‌شوند</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🔀</div>
+                    <div class="feature-text">Shape-shifting — اگر POST بلاک باشد، هر سرور یک بار هم با GET امتحان می‌شود</div>
                 </div>
             </div>
         </section>
@@ -2399,7 +2650,7 @@ async function handleRequest(request) {
 
             <details class="faq-item">
                 <summary>این DoH چه تفاوتی با 1.1.1.1 دارد؟</summary>
-                <div class="faq-answer">این DoH Proxy شخصی شماست که روی Cloudflare Worker اجرا می‌شود و به‌جای اتکا به یک provider، همزمان به ۱۰ سرور DNS برتر درخواست می‌فرستد (Parallel Racing)، سرورهای ناسالم را با Circuit Breaker کنار می‌گذارد، بر اساس موقعیت جغرافیایی بهترین سرور را انتخاب می‌کند و نتایج را کش هوشمند می‌کند. در نهایت از همان provider های معتبر استفاده می‌کند اما با لایه‌ای از قابلیت اطمینان و سرعت بیشتر.</div>
+                <div class="faq-answer">این DoH Proxy شخصی شماست که روی Cloudflare Worker اجرا می‌شود و به‌جای اتکا به یک provider، همزمان به ۶ سرور DNS برتر درخواست می‌فرستد (Parallel Racing)، سرورهای ناسالم را با Circuit Breaker کنار می‌گذارد، بر اساس موقعیت جغرافیایی بهترین سرور را انتخاب می‌کند و نتایج را کش هوشمند می‌کند. در نهایت از همان provider های معتبر استفاده می‌کند اما با لایه‌ای از قابلیت اطمینان و سرعت بیشتر.</div>
             </details>
 
             <details class="faq-item">
@@ -2424,12 +2675,17 @@ async function handleRequest(request) {
 
             <details class="faq-item">
                 <summary>Parallel Racing چگونه کار می‌کند؟</summary>
-                <div class="faq-answer">این سیستم هم‌زمان به ۱۰ سرور DNS برتر (بر اساس امتیازدهی منطقه، سرعت، سلامت و قابلیت اطمینان) درخواست می‌فرستد و اولین پاسخ معتبر را می‌پذیرد. این کار تأخیر را کاهش و قابلیت اطمینان را افزایش می‌دهد.</div>
+                <div class="faq-answer">این سیستم هم‌زمان به ۶ سرور DNS برتر (بر اساس امتیازدهی منطقه، سرعت، سلامت و قابلیت اطمینان) درخواست می‌فرستد و اولین پاسخ معتبر را می‌پذیرد. این کار تأخیر را کاهش و قابلیت اطمینان را افزایش می‌دهد.</div>
             </details>
 
             <details class="faq-item">
                 <summary>Request Coalescing چیست؟</summary>
                 <div class="faq-answer">وقتی چند کاربر یا برنامه هم‌زمان برای یک دامنه‌ی یکسان کوئری می‌زنند، به‌جای ارسال چند درخواست جداگانه به provider بالادستی، Worker فقط یک درخواست می‌فرستد و پاسخ را بین همه به اشتراک می‌گذارد. این باعث کاهش بار سرور و کاهش تأخیر می‌شود.</div>
+            </details>
+
+            <details class="faq-item">
+                <summary>برای فیلترینگ شدید چه تمهیداتی در نظر گرفته شده؟</summary>
+                <div class="faq-answer">علاوه بر موارد بالا: اگر همه‌ی providerهای بالادستی قطع شوند، جواب‌های کش‌شده تا ۲۴ ساعت همچنان سرو می‌شوند (Stale-while-dead)؛ سرورهایی که خیلی سریع fail می‌شوند — نشانه‌ی بلاک شدن با RST — سریع‌تر از چرخه کنار گذاشته می‌شوند؛ اگر متد POST بلاک باشد، هر سرور یک بار هم با GET امتحان می‌شود (Shape-shifting)؛ کوئری‌های DNS روی هر مسیری پذیرفته می‌شوند نه فقط ‎/dns-query‎ تا بلاک مبتنی بر path کار نکند؛ و وقتی بیشترِ تلاش‌ها ناموفق باشند، سیستم به‌صورت خودکار به سرورهای کمترشناخته‌شده (که معمولاً در لیست بلاک نیستند) امتیاز بیشتری می‌دهد.</div>
             </details>
         </section>
 

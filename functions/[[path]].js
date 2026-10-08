@@ -1318,9 +1318,12 @@ async function handleDNSQuery(request) {
   }
 }
 
-function generateAppleProfile(requestUrl) {
+function generateAppleProfile(requestUrl, dohPath = '/dns-query', accessToken = '') {
   const baseUrl = new URL(requestUrl);
-  const dohUrl = `${baseUrl.protocol}//${baseUrl.hostname}/dns-query`;
+  // Token (if any) travels as a query param so iOS/macOS encrypted-DNS
+  // keeps working in locked-down mode. This file is downloaded by the
+  // owner only, so embedding the token here is intentional.
+  const dohUrl = `${baseUrl.protocol}//${baseUrl.hostname}${dohPath}${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ''}`;
   const hostname = baseUrl.hostname;
 
   const uuid1 = crypto.randomUUID();
@@ -1626,16 +1629,213 @@ function generateStatsPage() {
 </body>
 </html>`;
 }
-async function handleRequest(request) {
+// normalize SECRET_PATH env value to a "/..." path, or "" when unset
+function normalizeSecretPath(v) {
+  const s = (v || '').trim();
+  if (!s) return '';
+  return s.startsWith('/') ? s : '/' + s;
+}
+
+// ===== VLESS-over-WebSocket proxy (optional full-traffic proxy) =====
+// Enabled only when the PROXY_UUID env var is set. The client (v2rayNG etc.)
+// opens wss://<host><proxyPath> and speaks VLESS inside the WebSocket;
+// we parse the VLESS header and relay TCP via cloudflare:sockets.
+// This is what actually opens blocked *sites* (traffic proxying), unlike
+// the DoH endpoint above which only encrypts DNS.
+
+function getProxyConfig(env) {
+  const uuid = (env.PROXY_UUID || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
+    return null;
+  }
+  return {
+    uuid,
+    uuidHex: uuid.replace(/-/g, ''),
+    path: normalizeSecretPath(env.PROXY_PATH) || '/proxy',
+  };
+}
+
+async function handleVlessProxy(request, proxyCfg) {
+  const upgrade = request.headers.get('Upgrade') || '';
+  if (upgrade.toLowerCase() !== 'websocket') {
+    return new Response('WebSocket upgrade required', { status: 426 });
+  }
+  let sockets;
+  try {
+    // dynamic import: DoH keeps working even where sockets are unavailable
+    sockets = await import('cloudflare:sockets');
+  } catch (e) {
+    return new Response('TCP sockets not available on this runtime', { status: 503 });
+  }
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  server.accept();
+
+  // Xray/v2rayNG 0-RTT "early data": first payload base64url in
+  // Sec-WebSocket-Protocol header.
+  let earlyData = new Uint8Array(0);
+  const edHeader = request.headers.get('sec-websocket-protocol') || '';
+  if (edHeader) {
+    try {
+      const b64 = edHeader.replace(/-/g, '+').replace(/_/g, '/');
+      const bin = atob(b64);
+      earlyData = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    } catch (e) { /* ignore malformed early data */ }
+  }
+
+  relayVlessConnection(server, proxyCfg.uuidHex, earlyData, sockets.connect);
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+function relayVlessConnection(ws, uuidHex, earlyData, connectFn) {
+  const textDecoder = new TextDecoder();
+  let buf = earlyData && earlyData.length ? earlyData.slice() : new Uint8Array(0);
+  let headerDone = false;
+  let tcpSocket = null;
+  let remoteWriter = null;
+
+  const concat = (a, b) => {
+    const r = new Uint8Array(a.length + b.length);
+    r.set(a, 0);
+    r.set(b, a.length);
+    return r;
+  };
+
+  const fail = () => {
+    try { ws.close(1011, 'proxy error'); } catch (e) {}
+    try { if (tcpSocket) tcpSocket.close(); } catch (e) {}
+  };
+
+  // remote TCP -> client WebSocket
+  async function pumpRemoteToWs() {
+    try {
+      ws.send(new Uint8Array([0, 0])); // VLESS success response
+      const reader = tcpSocket.readable.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.length) {
+          try { ws.send(value); } catch (e) { break; }
+        }
+      }
+      try { reader.releaseLock(); } catch (e) {}
+    } catch (e) { /* remote closed */ }
+    try { ws.close(); } catch (e) {}
+  }
+
+  async function processBuffer() {
+    if (headerDone) {
+      if (buf.length && remoteWriter) {
+        const data = buf;
+        buf = new Uint8Array(0);
+        try {
+          await remoteWriter.write(data);
+        } catch (e) { fail(); }
+      }
+      return;
+    }
+    // Minimal VLESS header: ver(1) + uuid(16) + addonLen(1) + cmd(1) + port(2) + atyp(1)
+    if (buf.length < 24) return; // wait for more data
+    let o = 0;
+    const ver = buf[o++];
+    if (ver !== 0) { fail(); return; }
+    let idHex = '';
+    for (let i = 0; i < 16; i++) idHex += buf[o++].toString(16).padStart(2, '0');
+    if (idHex !== uuidHex) { fail(); return; } // wrong UUID: drop silently
+    const addonLen = buf[o++];
+    o += addonLen;
+    if (buf.length < o + 4) return; // wait for cmd+port+atyp
+    const cmd = buf[o++];
+    if (cmd !== 1) { fail(); return; } // TCP only (no UDP/MUX)
+    const port = (buf[o] << 8) | buf[o + 1];
+    o += 2;
+    const atyp = buf[o++];
+    let host = '';
+    if (atyp === 1) { // IPv4
+      if (buf.length < o + 4) return;
+      host = buf[o] + '.' + buf[o + 1] + '.' + buf[o + 2] + '.' + buf[o + 3];
+      o += 4;
+    } else if (atyp === 2) { // domain
+      if (buf.length < o + 1) return;
+      const len = buf[o++];
+      if (buf.length < o + len) return;
+      host = textDecoder.decode(buf.slice(o, o + len));
+      o += len;
+    } else if (atyp === 3) { // IPv6
+      if (buf.length < o + 16) return;
+      const parts = [];
+      for (let i = 0; i < 16; i += 2) parts.push(((buf[o + i] << 8) | buf[o + i + 1]).toString(16));
+      host = parts.join(':');
+      o += 16;
+    } else { fail(); return; }
+
+    headerDone = true;
+    const rest = buf.slice(o);
+    buf = new Uint8Array(0);
+    try {
+      tcpSocket = connectFn({ hostname: host, port });
+    } catch (e) { fail(); return; }
+    try {
+      remoteWriter = tcpSocket.writable.getWriter();
+      if (rest.length) await remoteWriter.write(rest);
+    } catch (e) { fail(); return; }
+    pumpRemoteToWs();
+  }
+
+  ws.addEventListener('message', (event) => {
+    try {
+      const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new Uint8Array(0);
+      if (!data.length) return;
+      buf = concat(buf, data);
+      processBuffer();
+    } catch (e) { fail(); }
+  });
+  ws.addEventListener('close', () => { try { if (tcpSocket) tcpSocket.close(); } catch (e) {} });
+  ws.addEventListener('error', () => { try { if (tcpSocket) tcpSocket.close(); } catch (e) {} });
+  if (buf.length) processBuffer();
+}
+
+// Build the v2rayNG-ready vless:// share link for the landing page.
+function buildVlessLink(host, proxyCfg) {
+  const params = new URLSearchParams({
+    encryption: 'none',
+    security: 'tls',
+    sni: host,
+    type: 'ws',
+    host: host,
+    path: proxyCfg.path,
+  });
+  return `vless://${proxyCfg.uuid}@${host}:443?${params.toString()}#${encodeURIComponent('DoH-VLESS-Proxy')}`;
+}
+
+async function handleRequest(request, env = {}) {
   const url = new URL(request.url);
   const path = url.pathname;
 
-  if (path === '/dns-query') {
+  // --- Optional anti-censorship lockdown (Pages -> Settings -> Environment variables) ---
+  const secretPath = normalizeSecretPath(env.SECRET_PATH);
+  const accessToken = (env.ACCESS_TOKEN || '').trim();
+
+  const tokenOk = () =>
+    !accessToken ||
+    url.searchParams.get('token') === accessToken ||
+    request.headers.get('x-access-token') === accessToken;
+
+  const serveDns = () => {
+    if (!tokenOk()) {
+      return new Response('Forbidden', { status: 403 });
+    }
     return handleDNSQuery(request);
-  }
+  };
+
+  // Effective DoH endpoint path shown on the landing page and used in
+  // generated configs/profiles.
+  const dohPath = secretPath || '/dns-query';
 
   if (path === '/apple') {
-    const profile = generateAppleProfile(request.url);
+    const profile = generateAppleProfile(request.url, dohPath, accessToken);
     return new Response(profile, {
       headers: {
         'Content-Type': 'application/x-apple-aspen-config',
@@ -1650,20 +1850,43 @@ async function handleRequest(request) {
     });
   }
 
-  // Stealth endpoint: accept DNS queries on ANY path, not just /dns-query,
-  // so path-based blocking or fingerprinting of the DoH endpoint fails.
-  // The known pages above (/apple, /stats) keep their exact behavior.
-  if (
-    url.searchParams.has('dns') ||
-    (request.method === 'GET' && url.searchParams.has('name')) ||
-    request.method === 'POST'
-  ) {
-    return handleDNSQuery(request);
+  // Full-traffic VLESS proxy (optional): enabled only when PROXY_UUID is set.
+  // This is separate from the secret-path lockdown below.
+  const proxyCfg = getProxyConfig(env);
+  if (proxyCfg && path === proxyCfg.path) {
+    return handleVlessProxy(request, proxyCfg);
+  }
+
+  if (secretPath) {
+    // Locked-down mode: DoH is served ONLY on the secret path.
+    // /dns-query and the any-path stealth mode are disabled so the
+    // endpoint cannot be found by path enumeration.
+    if (path === secretPath) {
+      return serveDns();
+    }
+    // fall through to the landing page for everything else
+  } else {
+    if (path === '/dns-query') {
+      return serveDns();
+    }
+
+    // Stealth endpoint: accept DNS queries on ANY path, not just /dns-query,
+    // so path-based blocking or fingerprinting of the DoH endpoint fails.
+    // The known pages above (/apple, /stats) keep their exact behavior.
+    if (
+      url.searchParams.has('dns') ||
+      (request.method === 'GET' && url.searchParams.has('name')) ||
+      request.method === 'POST'
+    ) {
+      return serveDns();
+    }
   }
 
   const baseUrl = new URL(request.url);
-  const workerUrl = `${baseUrl.protocol}//${baseUrl.hostname}/dns-query`;
+  const workerUrl = `${baseUrl.protocol}//${baseUrl.hostname}${dohPath}`;
   const workerHost = baseUrl.hostname;
+  // VLESS proxy share link (only when PROXY_UUID is configured server-side)
+  const vlessLink = proxyCfg ? buildVlessLink(workerHost, proxyCfg) : '';
   const appleProfileUrl = `${baseUrl.protocol}//${baseUrl.hostname}/apple`;
   const statsUrl = `${baseUrl.protocol}//${baseUrl.hostname}/stats`;
 
@@ -2328,6 +2551,8 @@ async function handleRequest(request) {
             <div class="url-box" id="dohUrl">${workerUrl}</div>
             <button class="btn btn-primary" data-copy-target="dohUrl">📋 کپی آدرس</button>
         </div>
+        ${accessToken ? `<div class="info-box">🔑 روی این سرویس <strong>توکن دسترسی</strong> فعال است (به‌عمد در آدرس بالا نمایش داده نمی‌شود). در کلاینت‌ها به انتهای آدرس اضافه کنید:<br><code class="block-code">?token=YOUR_TOKEN</code>یا هدر <code>X-Access-Token</code> را بفرستید. بدون توکن، پاسخ 403 می‌گیرید.</div>` : ''}
+        ${secretPath ? `<div class="info-box">🕶️ حالت <strong>مسیر مخفی</strong> فعال است: DoH فقط روی همین مسیر بالا جواب می‌دهد و ‎/dns-query‎ غیرفعال است.</div>` : ''}
 
         <section id="features">
             <h2 class="section-title">✨ ویژگی‌های پیشرفته</h2>
@@ -2407,6 +2632,43 @@ async function handleRequest(request) {
                 <div class="feature-item">
                     <div class="feature-icon">🔀</div>
                     <div class="feature-text">Shape-shifting — اگر POST بلاک باشد، هر سرور یک بار هم با GET امتحان می‌شود</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🕶️</div>
+                    <div class="feature-text">Secret Path — با تنظیم SECRET_PATH، سرویس DoH فقط روی یک مسیر مخفی جواب می‌دهد</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🎟️</div>
+                    <div class="feature-text">Access Token — با تنظیم ACCESS_TOKEN، فقط کلاینت‌های دارای توکن پاسخ می‌گیرند</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🌐</div>
+                    <div class="feature-text">VLESS Proxy — با تنظیم PROXY_UUID، همین Worker به پروکسی کامل ترافیک (WebSocket+TLS) تبدیل می‌شود و سایت‌های فیلترشده با IP/SNI را باز می‌کند</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="anti-censorship">
+            <h2 class="section-title">🛡️ روش‌های جدید ضد فیلترینگ (SNI / IP / DPI)</h2>
+            <div class="info-box">
+                این پروکسی به‌تنهایی فقط <strong>فیلترینگ DNS</strong> را حل می‌کند. برای سه نوع فیلترینگی که هیچ کدی به‌تنهایی حریفشان نیست، جدیدترین روش‌های روز این‌هاست — بیشترشان سمت کلاینت یا دامنه است، نه داخل کد:
+            </div>
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <div class="feature-icon">🔐</div>
+                    <div class="feature-text"><strong>ECH — رمزنگاری SNI</strong> (استاندارد رسمی IETF از ۲۰۲۶). نام دامنه را داخل handshake رمز می‌کند تا ISP نتواند از روی SNI فیلتر کند. روی همین دامنه از سمت لبه‌ی Cloudflare فعال است و در فایرفاکس ۱۱۸+ و کروم ۱۱۷+ به‌صورت پیش‌فرض روشن است. شرط کار کردنش: DoH داخل خود مرورگر فعال باشد (کلیدهای ECH از رکورد HTTPS گرفته می‌شوند). تست: در cloudflare.com/ssl/encrypted-sni دکمه‌ی Check my browser باید سبز شود. محدودیت صادقانه: اگر خود دامنه یا IP کاملاً بلاک باشد، ECH کمکی نمی‌کند.</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🌐</div>
+                    <div class="feature-text"><strong>آی‌پی ثابت؟ نه — و بهتر هم هست که نباشد.</strong> روی Pages/Workers اصلاً گزینه‌ی IP ثابت وجود ندارد، و این یک مزیت است: ترافیک روی هزاران IP چرخان anycast می‌آید و IP ثابت اتفاقاً راحت‌تر بلاک می‌شود. اگر «آدرس ثابت» می‌خواهی، راه درستش <strong>دامنه‌ی اختصاصی رایگان</strong> است: در داشبورد Pages روی پروژه‌ات برو به Custom domains و دامنه‌ات را وصل کن؛ با ECH ترکیب می‌شود و دیگر به pages.dev وابسته نیستی.</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🎭</div>
+                    <div class="feature-text"><strong>مقابله با DPI و اثر انگشت TLS</strong> (سمت کلاینت): در Xray/v2rayNG گزینه‌ی <strong>uTLS</strong> را روی <strong>chrome</strong> یا <strong>randomized</strong> بگذار تا فینگرپرینت ClientHello شبیه مرورگر واقعی شود؛ کانفیگ <strong>Fragment</strong> همین صفحه هم بسته‌ی TLS Hello را تکه‌تکه می‌کند تا امضای آن برای DPI قابل شناسایی نباشد.</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🕶️</div>
+                    <div class="feature-text"><strong>مسیر مخفی + توکن</strong> (قابلیت جدید همین نسخه، سمت سرور): در داشبورد Cloudflare برو به <strong>Workers &amp; Pages → پروژه‌ات → Settings → Environment variables</strong> و این‌ها را بگذار، بعد Redeploy کن:<br>• <code>SECRET_PATH</code> مثل <code>/x7f3k9q2v</code> — از این به بعد DoH فقط روی همین مسیر جواب می‌دهد<br>• <code>ACCESS_TOKEN</code> یک رشته‌ی تصادفی — کلاینت باید <code>?token=...</code> بفرستد یا هدر <code>X-Access-Token</code><br>اگر خالی بگذاری، رفتار قبلی (‎/dns-query‎ روی همه‌ی مسیرها) حفظ می‌شود.</div>
                 </div>
             </div>
         </section>
@@ -2608,6 +2870,26 @@ async function handleRequest(request) {
                 • مکمل DoH؛ روی لایه‌ی متفاوتی از شبکه عمل می‌کند<br>
                 • افزایش قابلیت دور زدن فیلترینگ‌های پیشرفته‌تر</p>
             </div>
+
+            <div class="usage-card">
+                <h3 class="card-title">🌐 کانفیگ پروکسی کامل (VLESS) — باز کردن سایت‌های فیلترشده</h3>
+                <p>دو کانفیگ بالا فقط <strong>DNS</strong> را رمز می‌کنند. اگر سایتی (مثلاً کنسول Grok) با IP یا SNI فیلتر شده باشد، DNS امن به‌تنهایی آن را باز نمی‌کند — باید <strong>خود ترافیک</strong> از پروکسی رد شود. این کانفیگ دقیقاً همین کار را می‌کند: ترافیک v2rayNG از داخل همین Worker با پروتکل VLESS روی WebSocket امن عبور می‌کند.</p>
+                ${vlessLink ? `
+                <p><strong>✅ پروکسی روی سرور فعال است.</strong> لینک زیر را کپی و در v2rayNG گزینه‌ی <strong>Import from clipboard</strong> را بزن:</p>
+                <div class="url-container">
+                    <div class="url-box" id="vlessUrl" style="direction: ltr; text-align: left; word-break: break-all;">${vlessLink}</div>
+                    <button class="btn btn-primary" data-copy-target="vlessUrl">📋 کپی لینک</button>
+                </div>
+                <p>مشخصات: VLESS + WebSocket + TLS روی پورت 443، مسیر <code>${proxyCfg.path}</code>. کل ترافیک گوشی/سیستم را می‌توانی روی همین کانفیگ بگذاری.</p>
+                ` : `
+                <p><strong>⚠️ پروکسی هنوز فعال نشده.</strong> برای فعال‌سازی (یک‌بار):</p>
+                <p>۱. یک UUID تصادفی بساز (مثلاً در ترمینال: <code>uuidgen</code> یا از سایت uuidgenerator.net)<br>
+                ۲. در داشبورد Cloudflare برو به <strong>Workers &amp; Pages → پروژه‌ات → Settings → Environment variables</strong><br>
+                ۳. متغیر <code>PROXY_UUID</code> را با همان UUID اضافه کن (متغیر اختیاری <code>PROXY_PATH</code> هم مسیر دلخواه است؛ پیش‌فرض: <code>/proxy</code>)<br>
+                ۴. <strong>Redeploy</strong> کن و به همین صفحه برگرد — لینک آماده‌ی v2rayNG همین‌جا نمایش داده می‌شود.</p>
+                `}
+                <div class="info-box">⚠️ <strong>محدودیت‌های صادقانه:</strong> عبور دادن کل ترافیک از پلن رایگان Cloudflare سقف درخواست روزانه را سریع پر می‌کند و ممکن است خلاف قوانین استفاده‌ی Cloudflare باشد (ریسک تعلیق اکانت). این گزینه برای مواقع ضروری است؛ برای استفاده‌ی روزمره، سرور اختصاصی (VPS) راه مطمئن‌تری است.</div>
+            </div>
         </section>
 
         <h2 class="section-title">🛡️ توصیه‌های امنیتی</h2>
@@ -2685,7 +2967,22 @@ async function handleRequest(request) {
 
             <details class="faq-item">
                 <summary>برای فیلترینگ شدید چه تمهیداتی در نظر گرفته شده؟</summary>
-                <div class="faq-answer">علاوه بر موارد بالا: اگر همه‌ی providerهای بالادستی قطع شوند، جواب‌های کش‌شده تا ۲۴ ساعت همچنان سرو می‌شوند (Stale-while-dead)؛ سرورهایی که خیلی سریع fail می‌شوند — نشانه‌ی بلاک شدن با RST — سریع‌تر از چرخه کنار گذاشته می‌شوند؛ اگر متد POST بلاک باشد، هر سرور یک بار هم با GET امتحان می‌شود (Shape-shifting)؛ کوئری‌های DNS روی هر مسیری پذیرفته می‌شوند نه فقط ‎/dns-query‎ تا بلاک مبتنی بر path کار نکند؛ و وقتی بیشترِ تلاش‌ها ناموفق باشند، سیستم به‌صورت خودکار به سرورهای کمترشناخته‌شده (که معمولاً در لیست بلاک نیستند) امتیاز بیشتری می‌دهد.</div>
+                <div class="faq-answer">علاوه بر موارد بالا: اگر همه‌ی providerهای بالادستی قطع شوند، جواب‌های کش‌شده تا ۲۴ ساعت همچنان سرو می‌شوند (Stale-while-dead)؛ سرورهایی که خیلی سریع fail می‌شوند — نشانه‌ی بلاک شدن با RST — سریع‌تر از چرخه کنار گذاشته می‌شوند؛ اگر متد POST بلاک باشد، هر سرور یک بار هم با GET امتحان می‌شود (Shape-shifting)؛ کوئری‌های DNS روی هر مسیری پذیرفته می‌شوند نه فقط ‎/dns-query‎ تا بلاک مبتنی بر path کار نکند؛ و وقتی بیشترِ تلاش‌ها ناموفق باشند، سیستم به‌صورت خودکار به سرورهای کمترشناخته‌شده (که معمولاً در لیست بلاک نیستند) امتیاز بیشتری می‌دهد. برای SNI filtering هم ECH را فعال نگه دار (بخش «روش‌های جدید ضد فیلترینگ» را ببین).</div>
+            </details>
+
+            <details class="faq-item">
+                <summary>می‌توانم IP ثابت بگیرم؟</summary>
+                <div class="faq-answer">نه — روی Cloudflare Pages/Workers گزینه‌ی IP ثابت وجود ندارد، و برای دور زدن فیلترینگ همین بهتر است: ترافیک تو روی هزاران IP چرخان شبکه‌ی anycast می‌آید و یک IP ثابت اتفاقاً خیلی راحت‌تر بلاک می‌شود. اگر آدرس پایدار می‌خواهی، یک دامنه‌ی اختصاصی (رایگان) به پروژه‌ی Pages وصل کن (Custom domains)؛ با ECH هم ترکیب می‌شود.</div>
+            </details>
+
+            <details class="faq-item">
+                <summary>ECH چیست و چطور مطمئن شوم کار می‌کند؟</summary>
+                <div class="faq-answer">ECH نام دامنه را داخل handshake رمزنگاری می‌کند تا ISP نتواند از روی SNI بفهمد به کجا وصل شدی. روی دامنه‌ی همین سرویس از سمت Cloudflare فعال است و در فایرفاکس ۱۱۸+ و کروم ۱۱۷+ پیش‌فرض روشن است؛ فقط DoH را داخل خود مرورگر هم فعال کن. برای تست به cloudflare.com/ssl/encrypted-sni برو و Check my browser را بزن — هر چهار مورد باید سبز شود.</div>
+            </details>
+
+            <details class="faq-item">
+                <summary>با کانفیگ DoH سایتی باز نمی‌شود؛ چطور بازش کنم؟</summary>
+                <div class="faq-answer">کانفیگ‌های DoH فقط جلوی فیلترینگ DNS را می‌گیرند. اگر سایت با IP یا SNI فیلتر شده باشد، باید خود ترافیک از پروکسی رد شود: از بخش «کانفیگ‌های Xray» کارت «پروکسی کامل (VLESS)» را فعال کن (با تنظیم PROXY_UUID) و لینک vless را در v2rayNG ایمپورت کن. توجه: این حالت سقف روزانه‌ی پلن رایگان را سریع مصرف می‌کند و ممکن است خلاف قوانین Cloudflare باشد؛ برای استفاده‌ی دائمی سرور اختصاصی مطمئن‌تر است.</div>
             </details>
         </section>
 
@@ -2838,5 +3135,5 @@ async function handleRequest(request) {
 }
 
 export async function onRequest(context) {
-  return handleRequest(context.request);
+  return handleRequest(context.request, context.env || {});
 }

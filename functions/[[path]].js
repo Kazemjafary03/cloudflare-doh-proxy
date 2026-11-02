@@ -204,8 +204,18 @@ const DNS_CACHE_TTL_DEFAULT = 300;
 const PARALLEL_RACING_COUNT = 10;
 const RACE_TIMEOUT = 4000;
 const FALLBACK_TIMEOUT = 3000;
-const MAX_DNS_RESPONSE_SIZE = 4096;
+const HEALTH_CHECK_TIMEOUT = 2500;
+const MAX_DNS_RESPONSE_SIZE = 65535;
 const MAX_DNS_REQUEST_SIZE = 1024;
+const DNS_HEADER_SIZE = 12;
+const DNS_TYPE_SOA = 6;
+const DNS_TYPE_OPT = 41;
+const DNS_RCODE_NOERROR = 0;
+const DNS_RCODE_NXDOMAIN = 3;
+const DNS_CACHE_MAX_ENTRIES = 8000;
+const DNS_CACHE_EVICT_COUNT = 2000;
+const NEGATIVE_CACHE_MAX_ENTRIES = 2000;
+const NEGATIVE_CACHE_EVICT_COUNT = 500;
 const HEALTH_CHECK_INTERVAL = 90000;
 const ADAPTIVE_LEARNING_INTERVAL = 180000;
 const RATE_LIMIT_REQUESTS = 200;
@@ -227,6 +237,131 @@ let lastHealthCheck = Date.now();
 let lastAdaptiveLearning = Date.now();
 let concurrentRequests = 0;
 let globalRequestCount = 0;
+
+const HEX_TABLE = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
+
+function toUint8(buffer) {
+  return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+}
+
+function copyBuffer(buffer) {
+  return toUint8(buffer).slice().buffer;
+}
+
+function readUint16(view, offset) {
+  return (view[offset] << 8) | view[offset + 1];
+}
+
+function readUint32(view, offset) {
+  return ((view[offset] << 24) | (view[offset + 1] << 16) | (view[offset + 2] << 8) | view[offset + 3]) >>> 0;
+}
+
+function writeUint32(view, offset, value) {
+  view[offset] = (value >>> 24) & 0xFF;
+  view[offset + 1] = (value >>> 16) & 0xFF;
+  view[offset + 2] = (value >>> 8) & 0xFF;
+  view[offset + 3] = value & 0xFF;
+}
+
+// Returns the offset right after a (possibly compressed) DNS name, or -1 if malformed.
+function skipDnsName(view, offset) {
+  while (offset < view.length) {
+    const len = view[offset];
+    if (len === 0) return offset + 1;
+    if ((len & 0xC0) === 0xC0) return offset + 2 <= view.length ? offset + 2 : -1;
+    if ((len & 0xC0) !== 0) return -1;
+    offset += len + 1;
+  }
+  return -1;
+}
+
+// Walks every resource record of a DNS message. Returns false if the message is malformed.
+function walkDnsRecords(view, callback) {
+  if (view.length < DNS_HEADER_SIZE) return false;
+  const qdcount = readUint16(view, 4);
+  const sections = [
+    ['answer', readUint16(view, 6)],
+    ['authority', readUint16(view, 8)],
+    ['additional', readUint16(view, 10)]
+  ];
+
+  let offset = DNS_HEADER_SIZE;
+  for (let i = 0; i < qdcount; i++) {
+    offset = skipDnsName(view, offset);
+    if (offset < 0 || offset + 4 > view.length) return false;
+    offset += 4;
+  }
+
+  for (const [section, count] of sections) {
+    for (let i = 0; i < count; i++) {
+      const nameEnd = skipDnsName(view, offset);
+      if (nameEnd < 0 || nameEnd + 10 > view.length) return false;
+      const rdlength = readUint16(view, nameEnd + 8);
+      const rdataOffset = nameEnd + 10;
+      if (rdataOffset + rdlength > view.length) return false;
+      callback({
+        section,
+        nameOffset: offset,
+        type: readUint16(view, nameEnd),
+        ttlOffset: nameEnd + 4,
+        ttl: readUint32(view, nameEnd + 4),
+        rdataOffset,
+        rdlength
+      });
+      offset = rdataOffset + rdlength;
+    }
+  }
+  return true;
+}
+
+function getDnsRcode(dnsMessage) {
+  const view = toUint8(dnsMessage);
+  return view.length >= 4 ? view[3] & 0x0F : -1;
+}
+
+function isValidDnsQuery(dnsQuery) {
+  const view = toUint8(dnsQuery);
+  return view.length >= DNS_HEADER_SIZE && (view[2] & 0x80) === 0;
+}
+
+function isValidDnsResponse(dnsResponse, dnsQuery) {
+  const response = toUint8(dnsResponse);
+  const query = toUint8(dnsQuery);
+  if (response.length < DNS_HEADER_SIZE || response.length > MAX_DNS_RESPONSE_SIZE) return false;
+  if ((response[2] & 0x80) === 0) return false;
+  return response[0] === query[0] && response[1] === query[1];
+}
+
+// Returns a copy of the response with the client's query ID and TTLs reduced by elapsedSeconds.
+function prepareResponseForClient(dnsResponse, dnsQuery, elapsedSeconds = 0) {
+  const result = toUint8(dnsResponse).slice();
+  const query = toUint8(dnsQuery);
+
+  if (elapsedSeconds > 0) {
+    const updates = [];
+    const ok = walkDnsRecords(result, (rr) => {
+      if (rr.type !== DNS_TYPE_OPT) updates.push(rr);
+    });
+    if (ok) {
+      for (const rr of updates) {
+        writeUint32(result, rr.ttlOffset, Math.max(0, rr.ttl - elapsedSeconds));
+      }
+    }
+  }
+
+  if (result.length >= 2 && query.length >= 2) {
+    result[0] = query[0];
+    result[1] = query[1];
+  }
+  return result.buffer;
+}
+
+function runInBackground(ctx, promise) {
+  const guarded = Promise.resolve(promise).catch(() => {});
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(guarded);
+  }
+}
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -281,6 +416,9 @@ function checkCircuitBreaker(provider) {
       return true;
     }
     return false;
+  }
+  if (provider.circuitState === 'half-open') {
+    return true;
   }
   if (provider.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
     provider.circuitState = 'open';
@@ -346,7 +484,6 @@ function calculateProviderScore(provider, clientRegion = 'global') {
 function selectBestProviders(count, clientRegion = 'global') {
   const healthyProviders = UPSTREAM_DNS_PROVIDERS.filter(p =>
     p.healthScore > 25 &&
-    p.consecutiveFailures < CIRCUIT_BREAKER_THRESHOLD &&
     checkCircuitBreaker(p)
   );
 
@@ -383,7 +520,7 @@ function updateProviderMetrics(provider, success, responseTime) {
     provider.successCount++;
     provider.consecutiveFailures = 0;
     provider.healthScore = Math.min(100, provider.healthScore + 6);
-    if (provider.circuitState === 'half-open') {
+    if (provider.circuitState !== 'closed') {
       provider.circuitState = 'closed';
     }
 
@@ -395,6 +532,10 @@ function updateProviderMetrics(provider, success, responseTime) {
   } else {
     provider.consecutiveFailures++;
     provider.healthScore = Math.max(0, provider.healthScore - 12);
+    if (provider.circuitState === 'half-open' || provider.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      provider.circuitState = 'open';
+      provider.lastCircuitOpen = provider.lastCheck;
+    }
   }
 }
 
@@ -447,10 +588,11 @@ async function performHealthCheck() {
 
   const healthCheckPromises = providersToCheck.map(async (provider) => {
     const startTime = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT);
+    let success = false;
 
+    try {
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: {
@@ -458,22 +600,23 @@ async function performHealthCheck() {
           'Accept': 'application/dns-message',
           'User-Agent': getRandomUserAgent()
         },
-        body: testQuery,
+        body: testQuery.slice(),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (response.ok) {
-        updateProviderMetrics(provider, true, responseTime);
-      } else {
-        updateProviderMetrics(provider, false, responseTime);
+        const responseData = await response.arrayBuffer();
+        success = isValidDnsResponse(responseData, testQuery);
+      } else if (response.body) {
+        await response.body.cancel().catch(() => {});
       }
     } catch (error) {
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
+      success = false;
+    } finally {
+      clearTimeout(timeoutId);
     }
+
+    updateProviderMetrics(provider, success, Date.now() - startTime);
   });
 
   await Promise.allSettled(healthCheckPromises);
@@ -525,109 +668,53 @@ function applyDnsPadding(dnsQuery) {
 function stripECS(dnsQuery) {
   if (!ECS_STRIPPING_ENABLED) return dnsQuery;
   try {
-    const view = new Uint8Array(dnsQuery);
-    if (view.length < 12) return dnsQuery;
+    const view = toUint8(dnsQuery);
+    if (view.length < DNS_HEADER_SIZE) return dnsQuery;
 
-    const arcount = (view[10] << 8) | view[11];
+    const arcount = readUint16(view, 10);
     if (arcount === 0) return dnsQuery;
 
-    let offset = 12;
-    const qdcount = (view[4] << 8) | view[5];
+    let opt = null;
+    const wellFormed = walkDnsRecords(view, (rr) => {
+      if (!opt && rr.section === 'additional' && rr.type === DNS_TYPE_OPT) opt = rr;
+    });
+    if (!wellFormed || !opt) return dnsQuery;
 
-    for (let i = 0; i < qdcount && offset < view.length; i++) {
-      while (offset < view.length) {
-        const len = view[offset];
-        if (len === 0) { offset++; break; }
-        if ((len & 0xC0) === 0xC0) { offset += 2; break; }
-        offset += len + 1;
-      }
-      offset += 4;
-    }
+    // OPT RDATA starts after NAME + TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2).
+    const optRdataStart = opt.rdataOffset;
+    const optRdataEnd = opt.rdataOffset + opt.rdlength;
 
-    const ancount = (view[6] << 8) | view[7];
-    const nscount = (view[8] << 8) | view[9];
-    const skipSections = ancount + nscount;
-
-    for (let i = 0; i < skipSections && offset < view.length; i++) {
-      while (offset < view.length) {
-        const len = view[offset];
-        if (len === 0) { offset++; break; }
-        if ((len & 0xC0) === 0xC0) { offset += 2; break; }
-        offset += len + 1;
-      }
-      if (offset + 10 > view.length) return dnsQuery;
-      const rdlength = (view[offset + 8] << 8) | view[offset + 9];
-      offset += 10 + rdlength;
-    }
-
-    let optStart = -1;
-    let optEnd = -1;
-    let scanOffset = offset;
-
-    for (let i = 0; i < arcount && scanOffset < view.length; i++) {
-      const rrStart = scanOffset;
-      while (scanOffset < view.length) {
-        const len = view[scanOffset];
-        if (len === 0) { scanOffset++; break; }
-        if ((len & 0xC0) === 0xC0) { scanOffset += 2; break; }
-        scanOffset += len + 1;
-      }
-      if (scanOffset + 10 > view.length) break;
-      const rrType = (view[scanOffset] << 8) | view[scanOffset + 1];
-      const rdlength = (view[scanOffset + 8] << 8) | view[scanOffset + 9];
-      const rrEnd = scanOffset + 10 + rdlength;
-      if (rrType === 41) {
-        optStart = rrStart;
-        optEnd = rrEnd;
-        break;
-      }
-      scanOffset = rrEnd;
-    }
-
-    if (optStart === -1) return dnsQuery;
-
-    const optNameEnd = optStart + 1;
-    const optRdataStart = optNameEnd + 9;
-    const optRdataEnd = optEnd;
-
+    const keptOptions = [];
     let hasECS = false;
     let rPos = optRdataStart;
     while (rPos + 4 <= optRdataEnd) {
-      const optCode = (view[rPos] << 8) | view[rPos + 1];
-      const optLen = (view[rPos + 2] << 8) | view[rPos + 3];
-      if (optCode === 8) { hasECS = true; break; }
-      rPos += 4 + optLen;
+      const optCode = readUint16(view, rPos);
+      const optLen = readUint16(view, rPos + 2);
+      const next = rPos + 4 + optLen;
+      if (next > optRdataEnd) return dnsQuery;
+      if (optCode === 8) {
+        hasECS = true;
+      } else {
+        keptOptions.push(view.subarray(rPos, next));
+      }
+      rPos = next;
     }
 
     if (!hasECS) return dnsQuery;
 
-    const newRdataBytes = [];
-    rPos = optRdataStart;
-    while (rPos + 4 <= optRdataEnd) {
-      const optCode = (view[rPos] << 8) | view[rPos + 1];
-      const optLen = (view[rPos + 2] << 8) | view[rPos + 3];
-      if (optCode !== 8) {
-        for (let j = rPos; j < rPos + 4 + optLen && j < view.length; j++) {
-          newRdataBytes.push(view[j]);
-        }
-      }
-      rPos += 4 + optLen;
-    }
+    const newRdlength = keptOptions.reduce((sum, option) => sum + option.length, 0);
+    const result = new Uint8Array(view.length - (opt.rdlength - newRdlength));
 
-    const newRdlength = newRdataBytes.length;
-    const sizeDiff = (optRdataEnd - optRdataStart) - newRdlength;
-    const resultSize = view.length - sizeDiff;
-    const result = new Uint8Array(resultSize);
-
-    let writePos = 0;
-    for (let j = 0; j < optRdataStart; j++) result[writePos++] = view[j];
-
+    result.set(view.subarray(0, optRdataStart), 0);
     result[optRdataStart - 2] = (newRdlength >> 8) & 0xFF;
     result[optRdataStart - 1] = newRdlength & 0xFF;
 
-    for (const b of newRdataBytes) result[writePos++] = b;
-
-    for (let j = optRdataEnd; j < view.length; j++) result[writePos++] = view[j];
+    let writePos = optRdataStart;
+    for (const option of keptOptions) {
+      result.set(option, writePos);
+      writePos += option.length;
+    }
+    result.set(view.subarray(optRdataEnd), writePos);
 
     return result.buffer;
   } catch (e) {
@@ -652,15 +739,22 @@ function buildEnhancedHeaders(baseHeaders) {
   return headers;
 }
 
-async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
+function prepareUpstreamQuery(dnsQuery) {
   let processedQuery = applyDnsPadding(dnsQuery);
   processedQuery = stripECS(processedQuery);
+  return processedQuery;
+}
 
+async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
+  const processedQuery = prepareUpstreamQuery(dnsQuery);
   const selectedProviders = selectBestProviders(PARALLEL_RACING_COUNT, clientRegion);
+  const controllers = [];
+  let winnerFound = false;
 
   const racePromises = selectedProviders.map(async (provider) => {
     const startTime = Date.now();
     const controller = new AbortController();
+    controllers.push(controller);
     const adaptiveTimeout = getAdaptiveTimeout(provider);
     const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
 
@@ -676,23 +770,23 @@ async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global')
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: requestHeaders,
-        body: processedQuery,
+        body: copyBuffer(processedQuery),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (!response.ok) {
-        updateProviderMetrics(provider, false, responseTime);
+        if (response.body) await response.body.cancel().catch(() => {});
         throw new Error(`HTTP ${response.status}`);
       }
 
       const responseData = await response.arrayBuffer();
+      const responseTime = Date.now() - startTime;
 
       if (responseData.byteLength > MAX_DNS_RESPONSE_SIZE) {
-        updateProviderMetrics(provider, false, responseTime);
         throw new Error('Response too large');
+      }
+      if (!isValidDnsResponse(responseData, processedQuery)) {
+        throw new Error('Invalid DNS response');
       }
 
       updateProviderMetrics(provider, true, responseTime);
@@ -702,19 +796,30 @@ async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global')
         provider: provider.url,
         responseTime: responseTime
       };
-
     } catch (error) {
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
+      // Requests cancelled because another provider already won are not provider failures.
+      if (!(winnerFound && controller.signal.aborted)) {
+        updateProviderMetrics(provider, false, Date.now() - startTime);
+      }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   });
 
-  return Promise.any(racePromises);
+  try {
+    const winner = await Promise.any(racePromises);
+    winnerFound = true;
+    controllers.forEach(c => c.abort());
+    return winner;
+  } catch (error) {
+    error.attemptedProviders = selectedProviders.map(p => p.url);
+    throw error;
+  }
 }
 
 async function fallbackProviderRequest(dnsQuery, headers, excludeProviders = [], clientRegion = 'global') {
+  const processedQuery = prepareUpstreamQuery(dnsQuery);
   const availableProviders = UPSTREAM_DNS_PROVIDERS
     .filter(p =>
       !excludeProviders.includes(p.url) &&
@@ -739,131 +844,136 @@ async function fallbackProviderRequest(dnsQuery, headers, excludeProviders = [],
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: requestHeaders,
-        body: dnsQuery,
+        body: copyBuffer(processedQuery),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (response.ok) {
         const responseData = await response.arrayBuffer();
-        updateProviderMetrics(provider, true, responseTime);
-        return {
-          data: responseData,
-          provider: provider.url,
-          responseTime: responseTime
-        };
+        const responseTime = Date.now() - startTime;
+        if (isValidDnsResponse(responseData, processedQuery)) {
+          updateProviderMetrics(provider, true, responseTime);
+          return {
+            data: responseData,
+            provider: provider.url,
+            responseTime: responseTime
+          };
+        }
+      } else if (response.body) {
+        await response.body.cancel().catch(() => {});
       }
 
-      updateProviderMetrics(provider, false, responseTime);
+      updateProviderMetrics(provider, false, Date.now() - startTime);
     } catch (error) {
+      updateProviderMetrics(provider, false, Date.now() - startTime);
+    } finally {
       clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
     }
   }
 
   throw new Error('All fallback providers failed');
 }
 
+// Collision-free key: the full query except the 2-byte transaction ID.
 function getCacheKey(dnsQuery) {
-  const view = new Uint8Array(dnsQuery);
-  let hash = 2166136261;
-  for (let i = 4; i < view.length; i++) {
-    hash ^= view[i];
-    hash = Math.imul(hash, 16777619) >>> 0;
+  const view = toUint8(dnsQuery);
+  let key = 'dns_';
+  for (let i = 2; i < view.length; i++) {
+    key += HEX_TABLE[view[i]];
   }
-  return `dns_${hash}`;
+  return key;
 }
 
-function getCachedResponse(cacheKey) {
-  const cached = dnsCache.get(cacheKey);
+function getCachedEntry(cache, cacheKey, ttlSeconds) {
+  const cached = cache.get(cacheKey);
   if (!cached) return null;
 
-  if (Date.now() - cached.timestamp > cached.ttl * 1000) {
-    dnsCache.delete(cacheKey);
+  const ttl = ttlSeconds !== undefined ? ttlSeconds : cached.ttl;
+  const elapsedMs = Date.now() - cached.timestamp;
+  if (elapsedMs > ttl * 1000) {
+    cache.delete(cacheKey);
     return null;
   }
 
-  return cached.response;
+  return {
+    response: cached.response,
+    elapsedSeconds: Math.floor(elapsedMs / 1000),
+    remainingSeconds: Math.max(0, Math.ceil(ttl - elapsedMs / 1000))
+  };
+}
+
+function evictOldest(cache, count) {
+  let removed = 0;
+  for (const key of cache.keys()) {
+    if (removed++ >= count) break;
+    cache.delete(key);
+  }
+}
+
+function getCachedResponse(cacheKey) {
+  return getCachedEntry(dnsCache, cacheKey);
 }
 
 function setCachedResponse(cacheKey, response, ttl = DNS_CACHE_TTL_DEFAULT) {
   const finalTTL = Math.max(DNS_CACHE_TTL_MIN, Math.min(DNS_CACHE_TTL_MAX, ttl));
+  // Re-insert so Map insertion order stays oldest-first for O(1) eviction.
+  dnsCache.delete(cacheKey);
   dnsCache.set(cacheKey, {
-    response: response,
+    response: copyBuffer(response),
     timestamp: Date.now(),
     ttl: finalTTL
   });
 
-  if (dnsCache.size > 8000) {
-    const sortedEntries = Array.from(dnsCache.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp);
-    const toDelete = sortedEntries.slice(0, 2000);
-    toDelete.forEach(([key]) => dnsCache.delete(key));
+  if (dnsCache.size > DNS_CACHE_MAX_ENTRIES) {
+    evictOldest(dnsCache, DNS_CACHE_EVICT_COUNT);
   }
 }
 
 function checkNegativeCache(cacheKey) {
-  const cached = negativeDnsCache.get(cacheKey);
-  if (!cached) return null;
-
-  if (Date.now() - cached.timestamp > NEGATIVE_CACHE_TTL * 1000) {
-    negativeDnsCache.delete(cacheKey);
-    return null;
-  }
-
-  return cached.response;
+  return getCachedEntry(negativeDnsCache, cacheKey, NEGATIVE_CACHE_TTL);
 }
 
 function setNegativeCache(cacheKey, response) {
+  negativeDnsCache.delete(cacheKey);
   negativeDnsCache.set(cacheKey, {
-    response: response,
+    response: copyBuffer(response),
     timestamp: Date.now()
   });
 
-  if (negativeDnsCache.size > 2000) {
-    const oldestKeys = Array.from(negativeDnsCache.keys()).slice(0, 500);
-    oldestKeys.forEach(key => negativeDnsCache.delete(key));
+  if (negativeDnsCache.size > NEGATIVE_CACHE_MAX_ENTRIES) {
+    evictOldest(negativeDnsCache, NEGATIVE_CACHE_EVICT_COUNT);
   }
 }
 
 function isNXDOMAIN(dnsResponse) {
-  try {
-    const view = new DataView(dnsResponse);
-    const flags = view.getUint16(2);
-    const rcode = flags & 0x000F;
-    return rcode === 3;
-  } catch (e) {
-    return false;
-  }
+  return getDnsRcode(dnsResponse) === DNS_RCODE_NXDOMAIN;
 }
 
+// Minimum TTL of the answer records; for empty answers, the SOA negative TTL (RFC 2308).
 function extractTTL(dnsResponse) {
   try {
-    const view = new DataView(dnsResponse);
-    let offset = 12;
-    const qdcount = view.getUint16(4);
+    const view = toUint8(dnsResponse);
+    let answerTTL = null;
+    let soaTTL = null;
 
-    for (let i = 0; i < qdcount; i++) {
-      while (offset < dnsResponse.byteLength && view.getUint8(offset) !== 0) {
-        const len = view.getUint8(offset);
-        if (len > 63) break;
-        offset += len + 1;
+    const wellFormed = walkDnsRecords(view, (rr) => {
+      if (rr.type === DNS_TYPE_OPT) return;
+      if (rr.section === 'answer') {
+        answerTTL = answerTTL === null ? rr.ttl : Math.min(answerTTL, rr.ttl);
+      } else if (rr.section === 'authority' && rr.type === DNS_TYPE_SOA && rr.rdlength >= 20) {
+        const soaMinimum = readUint32(view, rr.rdataOffset + rr.rdlength - 4);
+        const ttl = Math.min(rr.ttl, soaMinimum);
+        soaTTL = soaTTL === null ? ttl : Math.min(soaTTL, ttl);
       }
-      offset += 5;
-    }
+    });
 
-    if (offset + 10 < dnsResponse.byteLength) {
-      offset += 10;
-      const ttl = view.getUint32(offset);
-      return Math.min(ttl, DNS_CACHE_TTL_MAX);
-    }
+    if (!wellFormed) return DNS_CACHE_TTL_DEFAULT;
+    const ttl = answerTTL !== null ? answerTTL : soaTTL;
+    if (ttl === null) return DNS_CACHE_TTL_DEFAULT;
+    return Math.min(ttl, DNS_CACHE_TTL_MAX);
   } catch (e) {
     return DNS_CACHE_TTL_DEFAULT;
   }
-  return DNS_CACHE_TTL_DEFAULT;
 }
 
 function isRateLimited(clientIP) {
@@ -899,11 +1009,13 @@ function buildCORSHeaders(origin) {
     'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Accept, Cache-Control, DNT',
-    'Access-Control-Max-Age': '86400'
+    'Access-Control-Expose-Headers': 'X-Cache, X-Provider, X-Response-Time, X-Client-Region, X-Rate-Limit, Retry-After',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin, Accept'
   };
 }
 
-async function handleDNSQuery(request) {
+async function handleDNSQuery(request, ctx) {
   const url = new URL(request.url);
   const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
   const cfData = request.cf || {};
@@ -948,7 +1060,6 @@ async function handleDNSQuery(request) {
               headers: { 'Accept': 'application/dns-json', 'User-Agent': getRandomUserAgent() },
               signal: controller.signal
             });
-            clearTimeout(timeoutId);
             if (resp.ok) {
               const jsonData = await resp.json();
               return new Response(JSON.stringify(jsonData), {
@@ -956,7 +1067,10 @@ async function handleDNSQuery(request) {
                 headers: { ...corsHeaders, 'Content-Type': 'application/dns-json', 'X-Cache': 'MISS' }
               });
             }
+            if (resp.body) await resp.body.cancel().catch(() => {});
           } catch (e) {
+            // fall through to SERVFAIL-style JSON answer
+          } finally {
             clearTimeout(timeoutId);
           }
           return new Response(JSON.stringify({ Status: 2 }), {
@@ -968,7 +1082,7 @@ async function handleDNSQuery(request) {
       return new Response('Missing dns parameter', { status: 400, headers: corsHeaders });
     }
     try {
-      const paddedDns = dnsParam.replace(/-/g, '+').replace(/_/g, '/');
+      const paddedDns = dnsParam.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
       const padding = '='.repeat((4 - (paddedDns.length % 4)) % 4);
       dnsQuery = Uint8Array.from(atob(paddedDns + padding), c => c.charCodeAt(0)).buffer;
     } catch (e) {
@@ -982,6 +1096,10 @@ async function handleDNSQuery(request) {
     return new Response('Request too large', { status: 413, headers: corsHeaders });
   }
 
+  if (!isValidDnsQuery(dnsQuery)) {
+    return new Response('Invalid DNS message', { status: 400, headers: corsHeaders });
+  }
+
   if (concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
     return new Response('Server busy', { status: 503, headers: corsHeaders });
   }
@@ -990,19 +1108,19 @@ async function handleDNSQuery(request) {
   globalRequestCount++;
 
   try {
-    performHealthCheck().catch(() => {});
-    performAdaptiveLearning().catch(() => {});
+    runInBackground(ctx, performHealthCheck());
+    runInBackground(ctx, performAdaptiveLearning());
 
     const cacheKey = getCacheKey(dnsQuery);
 
     const negativeCached = checkNegativeCache(cacheKey);
     if (negativeCached) {
-      return new Response(negativeCached, {
+      return new Response(prepareResponseForClient(negativeCached.response, dnsQuery, negativeCached.elapsedSeconds), {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/dns-message',
-          'Cache-Control': `public, max-age=${NEGATIVE_CACHE_TTL}`,
+          'Cache-Control': `public, max-age=${negativeCached.remainingSeconds}`,
           'X-Cache': 'NEGATIVE-HIT',
           'X-Provider': 'negative-cache'
         }
@@ -1011,12 +1129,12 @@ async function handleDNSQuery(request) {
 
     const cachedResponse = getCachedResponse(cacheKey);
     if (cachedResponse) {
-      return new Response(cachedResponse, {
+      return new Response(prepareResponseForClient(cachedResponse.response, dnsQuery, cachedResponse.elapsedSeconds), {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/dns-message',
-          'Cache-Control': `public, max-age=${DNS_CACHE_TTL_DEFAULT}`,
+          'Cache-Control': `public, max-age=${cachedResponse.remainingSeconds}`,
           'X-Cache': 'HIT',
           'X-Provider': 'cache',
           'X-Client-Region': clientRegion
@@ -1027,12 +1145,12 @@ async function handleDNSQuery(request) {
     if (pendingRequests.has(cacheKey)) {
       try {
         const coalescedResult = await pendingRequests.get(cacheKey);
-        return new Response(coalescedResult.data, {
+        return new Response(prepareResponseForClient(coalescedResult.data, dnsQuery), {
           status: 200,
           headers: {
             ...corsHeaders,
             'Content-Type': 'application/dns-message',
-            'Cache-Control': `public, max-age=${extractTTL(coalescedResult.data)}`,
+            'Cache-Control': `public, max-age=${getClientMaxAge(coalescedResult.data)}`,
             'X-Cache': 'COALESCED',
             'X-Provider': coalescedResult.provider,
             'X-Response-Time': `${coalescedResult.responseTime}ms`,
@@ -1040,11 +1158,12 @@ async function handleDNSQuery(request) {
           }
         });
       } catch (e) {
+        // The shared upstream request failed; retry independently below.
       }
     }
 
     const requestPromise = raceMultipleProviders(dnsQuery, request.headers, clientRegion)
-      .catch(() => fallbackProviderRequest(dnsQuery, request.headers, [], clientRegion));
+      .catch((error) => fallbackProviderRequest(dnsQuery, request.headers, (error && error.attemptedProviders) || [], clientRegion));
 
     pendingRequests.set(cacheKey, requestPromise);
 
@@ -1052,22 +1171,25 @@ async function handleDNSQuery(request) {
     try {
       result = await requestPromise;
     } finally {
-      pendingRequests.delete(cacheKey);
+      if (pendingRequests.get(cacheKey) === requestPromise) {
+        pendingRequests.delete(cacheKey);
+      }
     }
 
-    if (isNXDOMAIN(result.data)) {
+    const rcode = getDnsRcode(result.data);
+    if (rcode === DNS_RCODE_NXDOMAIN) {
       setNegativeCache(cacheKey, result.data);
-    } else {
+    } else if (rcode === DNS_RCODE_NOERROR) {
       const ttl = extractTTL(result.data);
       setCachedResponse(cacheKey, result.data, ttl);
     }
 
-    return new Response(result.data, {
+    return new Response(prepareResponseForClient(result.data, dnsQuery), {
       status: 200,
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/dns-message',
-        'Cache-Control': `public, max-age=${extractTTL(result.data)}`,
+        'Cache-Control': `public, max-age=${getClientMaxAge(result.data)}`,
         'X-Cache': 'MISS',
         'X-Provider': result.provider,
         'X-Response-Time': `${result.responseTime}ms`,
@@ -1081,12 +1203,19 @@ async function handleDNSQuery(request) {
       headers: {
         ...corsHeaders,
         'Content-Type': 'text/plain',
-        'X-Error': error.message
+        'X-Error': String((error && error.message) || 'Upstream failure').replace(/[\r\n]+/g, ' ').slice(0, 200)
       }
     });
   } finally {
     concurrentRequests--;
   }
+}
+
+// SERVFAIL/REFUSED and other error answers must not be cached downstream.
+function getClientMaxAge(dnsResponse) {
+  const rcode = getDnsRcode(dnsResponse);
+  if (rcode !== DNS_RCODE_NOERROR && rcode !== DNS_RCODE_NXDOMAIN) return 0;
+  return extractTTL(dnsResponse);
 }
 
 function generateAppleProfile(requestUrl) {
@@ -1398,12 +1527,12 @@ function generateStatsPage() {
 </html>`;
 }
 
-async function handleRequest(request) {
+async function handleRequest(request, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
 
   if (path === '/dns-query') {
-    return handleDNSQuery(request);
+    return handleDNSQuery(request, ctx);
   }
 
   if (path === '/apple') {
@@ -1418,7 +1547,11 @@ async function handleRequest(request) {
 
   if (path === '/stats') {
     return new Response(generateStatsPage(), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+      }
     });
   }
 
@@ -2322,10 +2455,12 @@ async function handleRequest(request) {
 
             <div class="usage-card">
                 <h3 class="card-title">🐧 لینوکس (systemd-resolved)</h3>
+                <p>systemd-resolved به‌تنهایی از DoH پشتیبانی نمی‌کند؛ ابتدا یک پروکسی محلی DoH (مثل AdGuard dnsproxy) را اجرا کنید:</p>
+                <code class="block-code">sudo dnsproxy -l 127.0.0.1 -p 53 -u ${workerUrl}</code>
                 <p>۱. ویرایش فایل تنظیمات:</p>
                 <code class="block-code">sudo nano /etc/systemd/resolved.conf</code>
                 <p>۲. اضافه کردن این خطوط:</p>
-                <code class="block-code">[Resolve]<br>DNS=${workerUrl}<br>DNSOverTLS=yes</code>
+                <code class="block-code">[Resolve]<br>DNS=127.0.0.1<br>Domains=~.</code>
                 <p>۳. ری‌استارت سرویس:</p>
                 <code class="block-code">sudo systemctl restart systemd-resolved</code>
             </div>
@@ -2982,5 +3117,12 @@ async function handleRequest(request) {
 }
 
 export async function onRequest(context) {
-  return handleRequest(context.request);
+  try {
+    return await handleRequest(context.request, context);
+  } catch (error) {
+    return new Response('Internal Server Error', {
+      status: 500,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
+  }
 }

@@ -210,6 +210,9 @@ const MAX_DNS_REQUEST_SIZE = 1024;
 const DNS_HEADER_SIZE = 12;
 const DNS_TYPE_SOA = 6;
 const DNS_TYPE_OPT = 41;
+const DNS_OPTION_ECS = 8;
+const DNS_OPTION_PADDING = 12;
+const DNS_PADDING_BLOCK_SIZE = 128;
 const DNS_RCODE_NOERROR = 0;
 const DNS_RCODE_NXDOMAIN = 3;
 const DNS_CACHE_MAX_ENTRIES = 8000;
@@ -237,6 +240,14 @@ let lastHealthCheck = Date.now();
 let lastAdaptiveLearning = Date.now();
 let concurrentRequests = 0;
 let globalRequestCount = 0;
+
+const CONFIG_TEMPLATE_BASE_URL = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/';
+const CONFIG_TEMPLATE_FILES = new Set([
+  'doh-proxy-fragment.template.json',
+  'doh-proxy-browser-front.template.json'
+]);
+const CONFIG_TEMPLATE_CACHE_TTL = 300;
+const CONFIG_TEMPLATE_TIMEOUT = 8000;
 
 const HEX_TABLE = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 
@@ -622,43 +633,81 @@ async function performHealthCheck() {
   await Promise.allSettled(healthCheckPromises);
 }
 
+// Returns the Padding option data length that makes the whole message a multiple of the block size (RFC 8467).
+function getPaddingDataSize(lengthBeforeOptionHeader) {
+  return (DNS_PADDING_BLOCK_SIZE - ((lengthBeforeOptionHeader + 4) % DNS_PADDING_BLOCK_SIZE)) % DNS_PADDING_BLOCK_SIZE;
+}
+
+function findOptRecord(view) {
+  let opt = null;
+  const wellFormed = walkDnsRecords(view, (rr) => {
+    if (!opt && rr.section === 'additional' && rr.type === DNS_TYPE_OPT) opt = rr;
+  });
+  return wellFormed ? opt : null;
+}
+
+function hasEdnsOption(view, opt, optionCode) {
+  const end = opt.rdataOffset + opt.rdlength;
+  let pos = opt.rdataOffset;
+  while (pos + 4 <= end) {
+    if (readUint16(view, pos) === optionCode) return true;
+    pos += 4 + readUint16(view, pos + 2);
+  }
+  return false;
+}
+
 function applyDnsPadding(dnsQuery) {
   if (!DNS_PADDING_ENABLED) return dnsQuery;
   try {
-    const view = new Uint8Array(dnsQuery);
-    if (view.length < 12) return dnsQuery;
+    const view = toUint8(dnsQuery);
+    if (view.length < DNS_HEADER_SIZE) return dnsQuery;
 
-    const arcount = (view[10] << 8) | view[11];
-    if (arcount > 0) return dnsQuery;
+    const arcount = readUint16(view, 10);
 
-    const paddingDataSize = Math.floor(Math.random() * 60) + 16;
-    const rdlength = 4 + paddingDataSize;
-    const optRRSize = 11 + rdlength;
-    const optRR = new Uint8Array(optRRSize);
+    if (arcount === 0) {
+      // No EDNS in the query: append an OPT RR (11 bytes) that carries only the Padding option.
+      const paddingDataSize = getPaddingDataSize(view.length + 11);
+      const rdlength = 4 + paddingDataSize;
+      const result = new Uint8Array(view.length + 11 + rdlength);
+      result.set(view);
 
-    let i = 0;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x29;
-    optRR[i++] = 0x10;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = (rdlength >> 8) & 0xFF;
-    optRR[i++] = rdlength & 0xFF;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x0C;
-    optRR[i++] = (paddingDataSize >> 8) & 0xFF;
-    optRR[i++] = paddingDataSize & 0xFF;
+      let i = view.length;
+      result[i++] = 0x00;                       // NAME: root
+      result[i++] = 0x00;
+      result[i++] = DNS_TYPE_OPT;               // TYPE: OPT
+      result[i++] = 0x10;
+      result[i++] = 0x00;                       // CLASS: UDP payload size 4096
+      i += 4;                                   // TTL: extended RCODE, version, flags = 0
+      result[i++] = (rdlength >> 8) & 0xFF;
+      result[i++] = rdlength & 0xFF;
+      result[i++] = 0x00;
+      result[i++] = DNS_OPTION_PADDING;
+      result[i++] = (paddingDataSize >> 8) & 0xFF;
+      result[i++] = paddingDataSize & 0xFF;     // padding bytes stay 0x00
 
-    const result = new Uint8Array(view.length + optRR.length);
+      result[10] = 0x00;
+      result[11] = 0x01;
+      return result.buffer;
+    }
+
+    // EDNS without Padding: append the option, only when OPT is the last record (nothing signed after it).
+    const opt = findOptRecord(view);
+    if (!opt || opt.rdataOffset + opt.rdlength !== view.length) return dnsQuery;
+    if (hasEdnsOption(view, opt, DNS_OPTION_PADDING)) return dnsQuery;
+
+    const paddingDataSize = getPaddingDataSize(view.length);
+    const newRdlength = opt.rdlength + 4 + paddingDataSize;
+    if (newRdlength > 0xFFFF) return dnsQuery;
+
+    const result = new Uint8Array(view.length + 4 + paddingDataSize);
     result.set(view);
-    result.set(optRR, view.length);
-    result[10] = 0x00;
-    result[11] = 0x01;
-
+    result[opt.rdataOffset - 2] = (newRdlength >> 8) & 0xFF;
+    result[opt.rdataOffset - 1] = newRdlength & 0xFF;
+    let i = view.length;
+    result[i++] = 0x00;
+    result[i++] = DNS_OPTION_PADDING;
+    result[i++] = (paddingDataSize >> 8) & 0xFF;
+    result[i++] = paddingDataSize & 0xFF;
     return result.buffer;
   } catch (e) {
     return dnsQuery;
@@ -674,11 +723,8 @@ function stripECS(dnsQuery) {
     const arcount = readUint16(view, 10);
     if (arcount === 0) return dnsQuery;
 
-    let opt = null;
-    const wellFormed = walkDnsRecords(view, (rr) => {
-      if (!opt && rr.section === 'additional' && rr.type === DNS_TYPE_OPT) opt = rr;
-    });
-    if (!wellFormed || !opt) return dnsQuery;
+    const opt = findOptRecord(view);
+    if (!opt) return dnsQuery;
 
     // OPT RDATA starts after NAME + TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2).
     const optRdataStart = opt.rdataOffset;
@@ -692,7 +738,7 @@ function stripECS(dnsQuery) {
       const optLen = readUint16(view, rPos + 2);
       const next = rPos + 4 + optLen;
       if (next > optRdataEnd) return dnsQuery;
-      if (optCode === 8) {
+      if (optCode === DNS_OPTION_ECS) {
         hasECS = true;
       } else {
         keptOptions.push(view.subarray(rPos, next));
@@ -740,9 +786,8 @@ function buildEnhancedHeaders(baseHeaders) {
 }
 
 function prepareUpstreamQuery(dnsQuery) {
-  let processedQuery = applyDnsPadding(dnsQuery);
-  processedQuery = stripECS(processedQuery);
-  return processedQuery;
+  const withoutECS = stripECS(dnsQuery);
+  return applyDnsPadding(withoutECS);
 }
 
 async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
@@ -895,6 +940,10 @@ function getCachedEntry(cache, cacheKey, ttlSeconds) {
     return null;
   }
 
+  // Move to the end of the Map so eviction removes the least recently used entries first.
+  cache.delete(cacheKey);
+  cache.set(cacheKey, cached);
+
   return {
     response: cached.response,
     elapsedSeconds: Math.floor(elapsedMs / 1000),
@@ -916,7 +965,7 @@ function getCachedResponse(cacheKey) {
 
 function setCachedResponse(cacheKey, response, ttl = DNS_CACHE_TTL_DEFAULT) {
   const finalTTL = Math.max(DNS_CACHE_TTL_MIN, Math.min(DNS_CACHE_TTL_MAX, ttl));
-  // Re-insert so Map insertion order stays oldest-first for O(1) eviction.
+  // Re-insert so Map order stays least-recently-used first.
   dnsCache.delete(cacheKey);
   dnsCache.set(cacheKey, {
     response: copyBuffer(response),
@@ -1044,6 +1093,10 @@ async function handleDNSQuery(request, ctx) {
   let dnsQuery;
 
   if (request.method === 'POST') {
+    const declaredLength = Number(request.headers.get('Content-Length') || 0);
+    if (declaredLength > MAX_DNS_REQUEST_SIZE) {
+      return new Response('Request too large', { status: 413, headers: corsHeaders });
+    }
     dnsQuery = await request.arrayBuffer();
   } else if (request.method === 'GET') {
     const dnsParam = url.searchParams.get('dns');
@@ -1055,7 +1108,12 @@ async function handleDNSQuery(request, ctx) {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), RACE_TIMEOUT);
           try {
-            const cfUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
+            const jsonParams = new URLSearchParams({ name, type });
+            for (const flag of ['do', 'cd']) {
+              const value = url.searchParams.get(flag);
+              if (value !== null) jsonParams.set(flag, value);
+            }
+            const cfUrl = `https://cloudflare-dns.com/dns-query?${jsonParams.toString()}`;
             const resp = await fetch(cfUrl, {
               headers: { 'Accept': 'application/dns-json', 'User-Agent': getRandomUserAgent() },
               signal: controller.signal
@@ -1108,9 +1166,6 @@ async function handleDNSQuery(request, ctx) {
   globalRequestCount++;
 
   try {
-    runInBackground(ctx, performHealthCheck());
-    runInBackground(ctx, performAdaptiveLearning());
-
     const cacheKey = getCacheKey(dnsQuery);
 
     const negativeCached = checkNegativeCache(cacheKey);
@@ -1208,6 +1263,9 @@ async function handleDNSQuery(request, ctx) {
     });
   } finally {
     concurrentRequests--;
+    // Started after the lookup so health-check fetches never queue ahead of the user's query.
+    runInBackground(ctx, performHealthCheck());
+    runInBackground(ctx, performAdaptiveLearning());
   }
 }
 
@@ -1218,14 +1276,33 @@ function getClientMaxAge(dnsResponse) {
   return extractTTL(dnsResponse);
 }
 
-function generateAppleProfile(requestUrl) {
-  const baseUrl = new URL(requestUrl);
-  const dohUrl = `${baseUrl.protocol}//${baseUrl.hostname}/dns-query`;
-  const hostname = baseUrl.hostname;
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
-  const uuid1 = crypto.randomUUID();
-  const uuid2 = crypto.randomUUID();
-  const uuid3 = crypto.randomUUID();
+// Deterministic UUID (RFC 9562 version 8 layout) so re-installing the profile replaces it instead of duplicating it.
+async function stableUuid(seed) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(seed)));
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0F) | 0x80;
+  bytes[8] = (bytes[8] & 0x3F) | 0x80;
+  const hex = Array.from(bytes, b => HEX_TABLE[b]).join('').toUpperCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function generateAppleProfile(requestUrl) {
+  const baseUrl = new URL(requestUrl);
+  const dohUrl = escapeXml(`${baseUrl.protocol}//${baseUrl.hostname}/dns-query`);
+  const hostname = escapeXml(baseUrl.hostname);
+
+  const uuid1 = await stableUuid(`doh-proxy-profile:${baseUrl.hostname}`);
+  const uuid2 = await stableUuid(`doh-proxy-dns-settings-id:${baseUrl.hostname}`);
+  const uuid3 = await stableUuid(`doh-proxy-dns-settings-uuid:${baseUrl.hostname}`);
 
   const mobileconfig = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1527,6 +1604,43 @@ function generateStatsPage() {
 </html>`;
 }
 
+// Same-origin mirror of the config templates, for networks where raw.githubusercontent.com is unreachable.
+async function handleConfigTemplate(fileName) {
+  if (!CONFIG_TEMPLATE_FILES.has(fileName)) {
+    return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG_TEMPLATE_TIMEOUT);
+  try {
+    const upstream = await fetch(CONFIG_TEMPLATE_BASE_URL + fileName, {
+      headers: { 'Accept': 'application/json, text/plain, */*', 'User-Agent': getRandomUserAgent() },
+      cf: { cacheTtl: CONFIG_TEMPLATE_CACHE_TTL, cacheEverything: true },
+      signal: controller.signal
+    });
+    if (!upstream.ok) {
+      if (upstream.body) await upstream.body.cancel().catch(() => {});
+      throw new Error(`HTTP ${upstream.status}`);
+    }
+    const text = await upstream.text();
+    JSON.parse(text);
+    return new Response(text, {
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': `public, max-age=${CONFIG_TEMPLATE_CACHE_TTL}`,
+        'X-Content-Type-Options': 'nosniff'
+      }
+    });
+  } catch (error) {
+    return new Response('Template unavailable', {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function handleRequest(request, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -1536,13 +1650,17 @@ async function handleRequest(request, ctx) {
   }
 
   if (path === '/apple') {
-    const profile = generateAppleProfile(request.url);
+    const profile = await generateAppleProfile(request.url);
     return new Response(profile, {
       headers: {
         'Content-Type': 'application/x-apple-aspen-config',
         'Content-Disposition': 'attachment; filename="DoH-Profile.mobileconfig"'
       }
     });
+  }
+
+  if (path.startsWith('/configs/')) {
+    return handleConfigTemplate(path.slice('/configs/'.length));
   }
 
   if (path === '/stats') {
@@ -2450,18 +2568,21 @@ async function handleRequest(request, ctx) {
 
             <div class="usage-card">
                 <h3 class="card-title">💻 ویندوز ۱۰/۱۱</h3>
-                <p>Settings ← Network &amp; Internet ← Properties ← DNS server assignment ← Edit ← Preferred DNS encryption: Encrypted only (DNS over HTTPS) و آدرس بالا را وارد کنید.</p>
+                <p>• <strong>روش پیشنهادی:</strong> برنامه‌ی YogaDNS را نصب کنید، یک سرور از نوع DNS-over-HTTPS با آدرس بالا اضافه کنید و آن را در قوانین (Rules) برای همه‌ی دامنه‌ها انتخاب کنید.<br>
+                • <strong>تنظیمات داخلی ویندوز:</strong> ویندوز DoH را بر پایه‌ی IP سرور DNS فعال می‌کند و فقط برای IPهایی کار می‌کند که آدرس DoH آن‌ها را بشناسد یا دستی برایشان ثبت شده باشد. وارد کردن این آدرس کنار IP یک سرویس دیگر (مثل 1.1.1.1) کافی نیست و ممکن است DNS بدون رمزنگاری ارسال شود.</p>
             </div>
 
             <div class="usage-card">
                 <h3 class="card-title">🐧 لینوکس (systemd-resolved)</h3>
-                <p>systemd-resolved به‌تنهایی از DoH پشتیبانی نمی‌کند؛ ابتدا یک پروکسی محلی DoH (مثل AdGuard dnsproxy) را اجرا کنید:</p>
-                <code class="block-code">sudo dnsproxy -l 127.0.0.1 -p 53 -u ${workerUrl}</code>
-                <p>۱. ویرایش فایل تنظیمات:</p>
+                <p>systemd-resolved از DoH پشتیبانی نمی‌کند (فقط DNS-over-TLS) و آدرس https را در تنظیمات DNS نمی‌پذیرد. برای همین باید یک کلاینت محلی DoH اجرا شود.</p>
+                <p>۱. برنامه‌ی dnsproxy (از AdGuard) را از صفحه‌ی Releases در GitHub دریافت کنید و در /usr/local/bin قرار دهید.</p>
+                <p>۲. اجرای کلاینت محلی (برای اجرای دائمی آن را به‌صورت سرویس systemd تعریف کنید):</p>
+                <code class="block-code">sudo dnsproxy -l 127.0.0.1 -p 53 -u ${workerUrl} -b 1.1.1.1:53</code>
+                <p>۳. ویرایش فایل تنظیمات:</p>
                 <code class="block-code">sudo nano /etc/systemd/resolved.conf</code>
-                <p>۲. اضافه کردن این خطوط:</p>
+                <p>۴. اضافه کردن این خطوط:</p>
                 <code class="block-code">[Resolve]<br>DNS=127.0.0.1<br>Domains=~.</code>
-                <p>۳. ری‌استارت سرویس:</p>
+                <p>۵. ری‌استارت سرویس:</p>
                 <code class="block-code">sudo systemctl restart systemd-resolved</code>
             </div>
 
@@ -2546,7 +2667,7 @@ async function handleRequest(request, ctx) {
                         </div>
                     </div>
                     <div class="code-viewer-body">
-                        <div class="code-box" id="xrayFragmentConfig" data-lang="json"><div class="code-line"><span class="code-gutter">1</span><span class="code-content" style="color: var(--fg-muted);">در حال دریافت کانفیگ از گیت‌هاب...</span></div></div>
+                        <div class="code-box" id="xrayFragmentConfig" data-lang="json" data-dynamic="true" data-raw=""><div class="code-line"><span class="code-gutter">1</span><span class="code-content" style="color: var(--fg-muted);">در حال دریافت کانفیگ از گیت‌هاب...</span></div></div>
                     </div>
                 </div>
                 <p><strong>مزایای کانفیگ Fragment:</strong></p>
@@ -2705,17 +2826,27 @@ async function handleRequest(request, ctx) {
 
         function copyToClipboard(elementId, btn) {
             const element = document.getElementById(elementId);
-            const text = element.getAttribute('data-raw') || element.textContent;
+            if (!element || btn.getAttribute('data-busy') === '1') return;
+            const text = element.hasAttribute('data-raw') ? element.getAttribute('data-raw') : element.textContent;
             const originalHTML = btn.innerHTML;
 
-            const onDone = () => {
-                btn.classList.add('copied');
-                btn.innerHTML = '✓ کپی شد!';
+            const showFeedback = (html, cssClass) => {
+                btn.setAttribute('data-busy', '1');
+                if (cssClass) btn.classList.add(cssClass);
+                btn.innerHTML = html;
                 setTimeout(() => {
-                    btn.classList.remove('copied');
+                    if (cssClass) btn.classList.remove(cssClass);
                     btn.innerHTML = originalHTML;
+                    btn.removeAttribute('data-busy');
                 }, 2000);
             };
+
+            if (!text) {
+                showFeedback('⏳ کانفیگ هنوز آماده نیست');
+                return;
+            }
+
+            const onDone = () => showFeedback('✓ کپی شد!', 'copied');
 
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(onDone).catch(() => {
@@ -2761,7 +2892,7 @@ async function handleRequest(request, ctx) {
         }
 
         function enhanceCodeBlocks() {
-            document.querySelectorAll('.code-box[data-lang="json"]').forEach(function (box) {
+            document.querySelectorAll('.code-box[data-lang="json"]:not([data-dynamic])').forEach(function (box) {
                 const raw = box.textContent.replace(/\\n$/, '');
                 const lines = raw.split('\\n');
                 const rows = lines.map(function (line, i) {
@@ -2775,7 +2906,26 @@ async function handleRequest(request, ctx) {
 
         const WORKER_URL = "${workerUrl}";
         const WORKER_HOST = "${workerHost}";
-        const FRAGMENT_CONFIG_SOURCE = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-fragment.template.json';
+        const FRAGMENT_CONFIG_SOURCES = [
+            '/configs/doh-proxy-fragment.template.json',
+            'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-fragment.template.json'
+        ];
+
+        async function fetchTemplateText(sources) {
+            let lastError = null;
+            for (const source of sources) {
+                try {
+                    const response = await fetch(source, { cache: 'no-store' });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const text = await response.text();
+                    JSON.parse(text);
+                    return text;
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            throw lastError || new Error('No template source available');
+        }
 
         async function loadDynamicFragmentConfig(triggerBtn) {
             const box = document.getElementById('xrayFragmentConfig');
@@ -2786,9 +2936,7 @@ async function handleRequest(request, ctx) {
                 triggerBtn.innerHTML = '⏳ در حال دریافت...';
             }
             try {
-                const response = await fetch(FRAGMENT_CONFIG_SOURCE, { cache: 'no-store' });
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                let text = await response.text();
+                let text = await fetchTemplateText(FRAGMENT_CONFIG_SOURCES);
                 text = text.split('\${workerUrl}').join(WORKER_URL);
                 text = text.split('\${workerHost}').join(WORKER_HOST);
                 JSON.parse(text);
@@ -2985,7 +3133,10 @@ async function handleRequest(request, ctx) {
           };
         }
 
-        const FRONT_CONFIG_SOURCE = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-browser-front.template.json';
+        const FRONT_CONFIG_SOURCES = [
+          '/configs/doh-proxy-browser-front.template.json',
+          'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-browser-front.template.json'
+        ];
         const frontState = { certText: '', configText: '' };
 
         function frontSetStatus(kind, message) {
@@ -3035,9 +3186,7 @@ async function handleRequest(request, ctx) {
           try {
             let text;
             try {
-              const response = await fetch(FRONT_CONFIG_SOURCE, { cache: 'no-store' });
-              if (!response.ok) throw new Error('HTTP ' + response.status);
-              text = await response.text();
+              text = await fetchTemplateText(FRONT_CONFIG_SOURCES);
             } catch (fetchError) {
               console.warn('Front config fetch failed.', fetchError);
               frontSetStatus('error', 'دریافت قالب کانفیگ از گیت‌هاب ناموفق بود. چند لحظه بعد دوباره تلاش کنید.');
@@ -3112,7 +3261,11 @@ async function handleRequest(request, ctx) {
 </html>`;
 
   return new Response(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer'
+    }
   });
 }
 

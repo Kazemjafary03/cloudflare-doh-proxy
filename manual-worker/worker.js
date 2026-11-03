@@ -204,8 +204,21 @@ const DNS_CACHE_TTL_DEFAULT = 300;
 const PARALLEL_RACING_COUNT = 10;
 const RACE_TIMEOUT = 4000;
 const FALLBACK_TIMEOUT = 3000;
-const MAX_DNS_RESPONSE_SIZE = 4096;
+const HEALTH_CHECK_TIMEOUT = 2500;
+const MAX_DNS_RESPONSE_SIZE = 65535;
 const MAX_DNS_REQUEST_SIZE = 1024;
+const DNS_HEADER_SIZE = 12;
+const DNS_TYPE_SOA = 6;
+const DNS_TYPE_OPT = 41;
+const DNS_OPTION_ECS = 8;
+const DNS_OPTION_PADDING = 12;
+const DNS_PADDING_BLOCK_SIZE = 128;
+const DNS_RCODE_NOERROR = 0;
+const DNS_RCODE_NXDOMAIN = 3;
+const DNS_CACHE_MAX_ENTRIES = 8000;
+const DNS_CACHE_EVICT_COUNT = 2000;
+const NEGATIVE_CACHE_MAX_ENTRIES = 2000;
+const NEGATIVE_CACHE_EVICT_COUNT = 500;
 const HEALTH_CHECK_INTERVAL = 90000;
 const ADAPTIVE_LEARNING_INTERVAL = 180000;
 const RATE_LIMIT_REQUESTS = 200;
@@ -227,6 +240,139 @@ let lastHealthCheck = Date.now();
 let lastAdaptiveLearning = Date.now();
 let concurrentRequests = 0;
 let globalRequestCount = 0;
+
+const CONFIG_TEMPLATE_BASE_URL = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/';
+const CONFIG_TEMPLATE_FILES = new Set([
+  'doh-proxy-fragment.template.json',
+  'doh-proxy-browser-front.template.json'
+]);
+const CONFIG_TEMPLATE_CACHE_TTL = 300;
+const CONFIG_TEMPLATE_TIMEOUT = 8000;
+
+const HEX_TABLE = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
+
+function toUint8(buffer) {
+  return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+}
+
+function copyBuffer(buffer) {
+  return toUint8(buffer).slice().buffer;
+}
+
+function readUint16(view, offset) {
+  return (view[offset] << 8) | view[offset + 1];
+}
+
+function readUint32(view, offset) {
+  return ((view[offset] << 24) | (view[offset + 1] << 16) | (view[offset + 2] << 8) | view[offset + 3]) >>> 0;
+}
+
+function writeUint32(view, offset, value) {
+  view[offset] = (value >>> 24) & 0xFF;
+  view[offset + 1] = (value >>> 16) & 0xFF;
+  view[offset + 2] = (value >>> 8) & 0xFF;
+  view[offset + 3] = value & 0xFF;
+}
+
+// Returns the offset right after a (possibly compressed) DNS name, or -1 if malformed.
+function skipDnsName(view, offset) {
+  while (offset < view.length) {
+    const len = view[offset];
+    if (len === 0) return offset + 1;
+    if ((len & 0xC0) === 0xC0) return offset + 2 <= view.length ? offset + 2 : -1;
+    if ((len & 0xC0) !== 0) return -1;
+    offset += len + 1;
+  }
+  return -1;
+}
+
+// Walks every resource record of a DNS message. Returns false if the message is malformed.
+function walkDnsRecords(view, callback) {
+  if (view.length < DNS_HEADER_SIZE) return false;
+  const qdcount = readUint16(view, 4);
+  const sections = [
+    ['answer', readUint16(view, 6)],
+    ['authority', readUint16(view, 8)],
+    ['additional', readUint16(view, 10)]
+  ];
+
+  let offset = DNS_HEADER_SIZE;
+  for (let i = 0; i < qdcount; i++) {
+    offset = skipDnsName(view, offset);
+    if (offset < 0 || offset + 4 > view.length) return false;
+    offset += 4;
+  }
+
+  for (const [section, count] of sections) {
+    for (let i = 0; i < count; i++) {
+      const nameEnd = skipDnsName(view, offset);
+      if (nameEnd < 0 || nameEnd + 10 > view.length) return false;
+      const rdlength = readUint16(view, nameEnd + 8);
+      const rdataOffset = nameEnd + 10;
+      if (rdataOffset + rdlength > view.length) return false;
+      callback({
+        section,
+        nameOffset: offset,
+        type: readUint16(view, nameEnd),
+        ttlOffset: nameEnd + 4,
+        ttl: readUint32(view, nameEnd + 4),
+        rdataOffset,
+        rdlength
+      });
+      offset = rdataOffset + rdlength;
+    }
+  }
+  return true;
+}
+
+function getDnsRcode(dnsMessage) {
+  const view = toUint8(dnsMessage);
+  return view.length >= 4 ? view[3] & 0x0F : -1;
+}
+
+function isValidDnsQuery(dnsQuery) {
+  const view = toUint8(dnsQuery);
+  return view.length >= DNS_HEADER_SIZE && (view[2] & 0x80) === 0;
+}
+
+function isValidDnsResponse(dnsResponse, dnsQuery) {
+  const response = toUint8(dnsResponse);
+  const query = toUint8(dnsQuery);
+  if (response.length < DNS_HEADER_SIZE || response.length > MAX_DNS_RESPONSE_SIZE) return false;
+  if ((response[2] & 0x80) === 0) return false;
+  return response[0] === query[0] && response[1] === query[1];
+}
+
+// Returns a copy of the response with the client's query ID and TTLs reduced by elapsedSeconds.
+function prepareResponseForClient(dnsResponse, dnsQuery, elapsedSeconds = 0) {
+  const result = toUint8(dnsResponse).slice();
+  const query = toUint8(dnsQuery);
+
+  if (elapsedSeconds > 0) {
+    const updates = [];
+    const ok = walkDnsRecords(result, (rr) => {
+      if (rr.type !== DNS_TYPE_OPT) updates.push(rr);
+    });
+    if (ok) {
+      for (const rr of updates) {
+        writeUint32(result, rr.ttlOffset, Math.max(0, rr.ttl - elapsedSeconds));
+      }
+    }
+  }
+
+  if (result.length >= 2 && query.length >= 2) {
+    result[0] = query[0];
+    result[1] = query[1];
+  }
+  return result.buffer;
+}
+
+function runInBackground(ctx, promise) {
+  const guarded = Promise.resolve(promise).catch(() => {});
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(guarded);
+  }
+}
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -281,6 +427,9 @@ function checkCircuitBreaker(provider) {
       return true;
     }
     return false;
+  }
+  if (provider.circuitState === 'half-open') {
+    return true;
   }
   if (provider.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
     provider.circuitState = 'open';
@@ -346,7 +495,6 @@ function calculateProviderScore(provider, clientRegion = 'global') {
 function selectBestProviders(count, clientRegion = 'global') {
   const healthyProviders = UPSTREAM_DNS_PROVIDERS.filter(p =>
     p.healthScore > 25 &&
-    p.consecutiveFailures < CIRCUIT_BREAKER_THRESHOLD &&
     checkCircuitBreaker(p)
   );
 
@@ -383,7 +531,7 @@ function updateProviderMetrics(provider, success, responseTime) {
     provider.successCount++;
     provider.consecutiveFailures = 0;
     provider.healthScore = Math.min(100, provider.healthScore + 6);
-    if (provider.circuitState === 'half-open') {
+    if (provider.circuitState !== 'closed') {
       provider.circuitState = 'closed';
     }
 
@@ -395,6 +543,10 @@ function updateProviderMetrics(provider, success, responseTime) {
   } else {
     provider.consecutiveFailures++;
     provider.healthScore = Math.max(0, provider.healthScore - 12);
+    if (provider.circuitState === 'half-open' || provider.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      provider.circuitState = 'open';
+      provider.lastCircuitOpen = provider.lastCheck;
+    }
   }
 }
 
@@ -447,10 +599,11 @@ async function performHealthCheck() {
 
   const healthCheckPromises = providersToCheck.map(async (provider) => {
     const startTime = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT);
+    let success = false;
 
+    try {
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: {
@@ -458,64 +611,103 @@ async function performHealthCheck() {
           'Accept': 'application/dns-message',
           'User-Agent': getRandomUserAgent()
         },
-        body: testQuery,
+        body: testQuery.slice(),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (response.ok) {
-        updateProviderMetrics(provider, true, responseTime);
-      } else {
-        updateProviderMetrics(provider, false, responseTime);
+        const responseData = await response.arrayBuffer();
+        success = isValidDnsResponse(responseData, testQuery);
+      } else if (response.body) {
+        await response.body.cancel().catch(() => {});
       }
     } catch (error) {
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
+      success = false;
+    } finally {
+      clearTimeout(timeoutId);
     }
+
+    updateProviderMetrics(provider, success, Date.now() - startTime);
   });
 
   await Promise.allSettled(healthCheckPromises);
 }
 
+// Returns the Padding option data length that makes the whole message a multiple of the block size (RFC 8467).
+function getPaddingDataSize(lengthBeforeOptionHeader) {
+  return (DNS_PADDING_BLOCK_SIZE - ((lengthBeforeOptionHeader + 4) % DNS_PADDING_BLOCK_SIZE)) % DNS_PADDING_BLOCK_SIZE;
+}
+
+function findOptRecord(view) {
+  let opt = null;
+  const wellFormed = walkDnsRecords(view, (rr) => {
+    if (!opt && rr.section === 'additional' && rr.type === DNS_TYPE_OPT) opt = rr;
+  });
+  return wellFormed ? opt : null;
+}
+
+function hasEdnsOption(view, opt, optionCode) {
+  const end = opt.rdataOffset + opt.rdlength;
+  let pos = opt.rdataOffset;
+  while (pos + 4 <= end) {
+    if (readUint16(view, pos) === optionCode) return true;
+    pos += 4 + readUint16(view, pos + 2);
+  }
+  return false;
+}
+
 function applyDnsPadding(dnsQuery) {
   if (!DNS_PADDING_ENABLED) return dnsQuery;
   try {
-    const view = new Uint8Array(dnsQuery);
-    if (view.length < 12) return dnsQuery;
+    const view = toUint8(dnsQuery);
+    if (view.length < DNS_HEADER_SIZE) return dnsQuery;
 
-    const arcount = (view[10] << 8) | view[11];
-    if (arcount > 0) return dnsQuery;
+    const arcount = readUint16(view, 10);
 
-    const paddingDataSize = Math.floor(Math.random() * 60) + 16;
-    const rdlength = 4 + paddingDataSize;
-    const optRRSize = 11 + rdlength;
-    const optRR = new Uint8Array(optRRSize);
+    if (arcount === 0) {
+      // No EDNS in the query: append an OPT RR (11 bytes) that carries only the Padding option.
+      const paddingDataSize = getPaddingDataSize(view.length + 11);
+      const rdlength = 4 + paddingDataSize;
+      const result = new Uint8Array(view.length + 11 + rdlength);
+      result.set(view);
 
-    let i = 0;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x29;
-    optRR[i++] = 0x10;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x00;
-    optRR[i++] = (rdlength >> 8) & 0xFF;
-    optRR[i++] = rdlength & 0xFF;
-    optRR[i++] = 0x00;
-    optRR[i++] = 0x0C;
-    optRR[i++] = (paddingDataSize >> 8) & 0xFF;
-    optRR[i++] = paddingDataSize & 0xFF;
+      let i = view.length;
+      result[i++] = 0x00;                       // NAME: root
+      result[i++] = 0x00;
+      result[i++] = DNS_TYPE_OPT;               // TYPE: OPT
+      result[i++] = 0x10;
+      result[i++] = 0x00;                       // CLASS: UDP payload size 4096
+      i += 4;                                   // TTL: extended RCODE, version, flags = 0
+      result[i++] = (rdlength >> 8) & 0xFF;
+      result[i++] = rdlength & 0xFF;
+      result[i++] = 0x00;
+      result[i++] = DNS_OPTION_PADDING;
+      result[i++] = (paddingDataSize >> 8) & 0xFF;
+      result[i++] = paddingDataSize & 0xFF;     // padding bytes stay 0x00
 
-    const result = new Uint8Array(view.length + optRR.length);
+      result[10] = 0x00;
+      result[11] = 0x01;
+      return result.buffer;
+    }
+
+    // EDNS without Padding: append the option, only when OPT is the last record (nothing signed after it).
+    const opt = findOptRecord(view);
+    if (!opt || opt.rdataOffset + opt.rdlength !== view.length) return dnsQuery;
+    if (hasEdnsOption(view, opt, DNS_OPTION_PADDING)) return dnsQuery;
+
+    const paddingDataSize = getPaddingDataSize(view.length);
+    const newRdlength = opt.rdlength + 4 + paddingDataSize;
+    if (newRdlength > 0xFFFF) return dnsQuery;
+
+    const result = new Uint8Array(view.length + 4 + paddingDataSize);
     result.set(view);
-    result.set(optRR, view.length);
-    result[10] = 0x00;
-    result[11] = 0x01;
-
+    result[opt.rdataOffset - 2] = (newRdlength >> 8) & 0xFF;
+    result[opt.rdataOffset - 1] = newRdlength & 0xFF;
+    let i = view.length;
+    result[i++] = 0x00;
+    result[i++] = DNS_OPTION_PADDING;
+    result[i++] = (paddingDataSize >> 8) & 0xFF;
+    result[i++] = paddingDataSize & 0xFF;
     return result.buffer;
   } catch (e) {
     return dnsQuery;
@@ -525,109 +717,50 @@ function applyDnsPadding(dnsQuery) {
 function stripECS(dnsQuery) {
   if (!ECS_STRIPPING_ENABLED) return dnsQuery;
   try {
-    const view = new Uint8Array(dnsQuery);
-    if (view.length < 12) return dnsQuery;
+    const view = toUint8(dnsQuery);
+    if (view.length < DNS_HEADER_SIZE) return dnsQuery;
 
-    const arcount = (view[10] << 8) | view[11];
+    const arcount = readUint16(view, 10);
     if (arcount === 0) return dnsQuery;
 
-    let offset = 12;
-    const qdcount = (view[4] << 8) | view[5];
+    const opt = findOptRecord(view);
+    if (!opt) return dnsQuery;
 
-    for (let i = 0; i < qdcount && offset < view.length; i++) {
-      while (offset < view.length) {
-        const len = view[offset];
-        if (len === 0) { offset++; break; }
-        if ((len & 0xC0) === 0xC0) { offset += 2; break; }
-        offset += len + 1;
-      }
-      offset += 4;
-    }
+    // OPT RDATA starts after NAME + TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2).
+    const optRdataStart = opt.rdataOffset;
+    const optRdataEnd = opt.rdataOffset + opt.rdlength;
 
-    const ancount = (view[6] << 8) | view[7];
-    const nscount = (view[8] << 8) | view[9];
-    const skipSections = ancount + nscount;
-
-    for (let i = 0; i < skipSections && offset < view.length; i++) {
-      while (offset < view.length) {
-        const len = view[offset];
-        if (len === 0) { offset++; break; }
-        if ((len & 0xC0) === 0xC0) { offset += 2; break; }
-        offset += len + 1;
-      }
-      if (offset + 10 > view.length) return dnsQuery;
-      const rdlength = (view[offset + 8] << 8) | view[offset + 9];
-      offset += 10 + rdlength;
-    }
-
-    let optStart = -1;
-    let optEnd = -1;
-    let scanOffset = offset;
-
-    for (let i = 0; i < arcount && scanOffset < view.length; i++) {
-      const rrStart = scanOffset;
-      while (scanOffset < view.length) {
-        const len = view[scanOffset];
-        if (len === 0) { scanOffset++; break; }
-        if ((len & 0xC0) === 0xC0) { scanOffset += 2; break; }
-        scanOffset += len + 1;
-      }
-      if (scanOffset + 10 > view.length) break;
-      const rrType = (view[scanOffset] << 8) | view[scanOffset + 1];
-      const rdlength = (view[scanOffset + 8] << 8) | view[scanOffset + 9];
-      const rrEnd = scanOffset + 10 + rdlength;
-      if (rrType === 41) {
-        optStart = rrStart;
-        optEnd = rrEnd;
-        break;
-      }
-      scanOffset = rrEnd;
-    }
-
-    if (optStart === -1) return dnsQuery;
-
-    const optNameEnd = optStart + 1;
-    const optRdataStart = optNameEnd + 9;
-    const optRdataEnd = optEnd;
-
+    const keptOptions = [];
     let hasECS = false;
     let rPos = optRdataStart;
     while (rPos + 4 <= optRdataEnd) {
-      const optCode = (view[rPos] << 8) | view[rPos + 1];
-      const optLen = (view[rPos + 2] << 8) | view[rPos + 3];
-      if (optCode === 8) { hasECS = true; break; }
-      rPos += 4 + optLen;
+      const optCode = readUint16(view, rPos);
+      const optLen = readUint16(view, rPos + 2);
+      const next = rPos + 4 + optLen;
+      if (next > optRdataEnd) return dnsQuery;
+      if (optCode === DNS_OPTION_ECS) {
+        hasECS = true;
+      } else {
+        keptOptions.push(view.subarray(rPos, next));
+      }
+      rPos = next;
     }
 
     if (!hasECS) return dnsQuery;
 
-    const newRdataBytes = [];
-    rPos = optRdataStart;
-    while (rPos + 4 <= optRdataEnd) {
-      const optCode = (view[rPos] << 8) | view[rPos + 1];
-      const optLen = (view[rPos + 2] << 8) | view[rPos + 3];
-      if (optCode !== 8) {
-        for (let j = rPos; j < rPos + 4 + optLen && j < view.length; j++) {
-          newRdataBytes.push(view[j]);
-        }
-      }
-      rPos += 4 + optLen;
-    }
+    const newRdlength = keptOptions.reduce((sum, option) => sum + option.length, 0);
+    const result = new Uint8Array(view.length - (opt.rdlength - newRdlength));
 
-    const newRdlength = newRdataBytes.length;
-    const sizeDiff = (optRdataEnd - optRdataStart) - newRdlength;
-    const resultSize = view.length - sizeDiff;
-    const result = new Uint8Array(resultSize);
-
-    let writePos = 0;
-    for (let j = 0; j < optRdataStart; j++) result[writePos++] = view[j];
-
+    result.set(view.subarray(0, optRdataStart), 0);
     result[optRdataStart - 2] = (newRdlength >> 8) & 0xFF;
     result[optRdataStart - 1] = newRdlength & 0xFF;
 
-    for (const b of newRdataBytes) result[writePos++] = b;
-
-    for (let j = optRdataEnd; j < view.length; j++) result[writePos++] = view[j];
+    let writePos = optRdataStart;
+    for (const option of keptOptions) {
+      result.set(option, writePos);
+      writePos += option.length;
+    }
+    result.set(view.subarray(optRdataEnd), writePos);
 
     return result.buffer;
   } catch (e) {
@@ -652,15 +785,21 @@ function buildEnhancedHeaders(baseHeaders) {
   return headers;
 }
 
-async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
-  let processedQuery = applyDnsPadding(dnsQuery);
-  processedQuery = stripECS(processedQuery);
+function prepareUpstreamQuery(dnsQuery) {
+  const withoutECS = stripECS(dnsQuery);
+  return applyDnsPadding(withoutECS);
+}
 
+async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global') {
+  const processedQuery = prepareUpstreamQuery(dnsQuery);
   const selectedProviders = selectBestProviders(PARALLEL_RACING_COUNT, clientRegion);
+  const controllers = [];
+  let winnerFound = false;
 
   const racePromises = selectedProviders.map(async (provider) => {
     const startTime = Date.now();
     const controller = new AbortController();
+    controllers.push(controller);
     const adaptiveTimeout = getAdaptiveTimeout(provider);
     const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
 
@@ -676,23 +815,23 @@ async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global')
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: requestHeaders,
-        body: processedQuery,
+        body: copyBuffer(processedQuery),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (!response.ok) {
-        updateProviderMetrics(provider, false, responseTime);
+        if (response.body) await response.body.cancel().catch(() => {});
         throw new Error(`HTTP ${response.status}`);
       }
 
       const responseData = await response.arrayBuffer();
+      const responseTime = Date.now() - startTime;
 
       if (responseData.byteLength > MAX_DNS_RESPONSE_SIZE) {
-        updateProviderMetrics(provider, false, responseTime);
         throw new Error('Response too large');
+      }
+      if (!isValidDnsResponse(responseData, processedQuery)) {
+        throw new Error('Invalid DNS response');
       }
 
       updateProviderMetrics(provider, true, responseTime);
@@ -702,19 +841,30 @@ async function raceMultipleProviders(dnsQuery, headers, clientRegion = 'global')
         provider: provider.url,
         responseTime: responseTime
       };
-
     } catch (error) {
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
+      // Requests cancelled because another provider already won are not provider failures.
+      if (!(winnerFound && controller.signal.aborted)) {
+        updateProviderMetrics(provider, false, Date.now() - startTime);
+      }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   });
 
-  return Promise.any(racePromises);
+  try {
+    const winner = await Promise.any(racePromises);
+    winnerFound = true;
+    controllers.forEach(c => c.abort());
+    return winner;
+  } catch (error) {
+    error.attemptedProviders = selectedProviders.map(p => p.url);
+    throw error;
+  }
 }
 
 async function fallbackProviderRequest(dnsQuery, headers, excludeProviders = [], clientRegion = 'global') {
+  const processedQuery = prepareUpstreamQuery(dnsQuery);
   const availableProviders = UPSTREAM_DNS_PROVIDERS
     .filter(p =>
       !excludeProviders.includes(p.url) &&
@@ -739,131 +889,140 @@ async function fallbackProviderRequest(dnsQuery, headers, excludeProviders = [],
       const response = await fetch(provider.url, {
         method: 'POST',
         headers: requestHeaders,
-        body: dnsQuery,
+        body: copyBuffer(processedQuery),
         signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-
       if (response.ok) {
         const responseData = await response.arrayBuffer();
-        updateProviderMetrics(provider, true, responseTime);
-        return {
-          data: responseData,
-          provider: provider.url,
-          responseTime: responseTime
-        };
+        const responseTime = Date.now() - startTime;
+        if (isValidDnsResponse(responseData, processedQuery)) {
+          updateProviderMetrics(provider, true, responseTime);
+          return {
+            data: responseData,
+            provider: provider.url,
+            responseTime: responseTime
+          };
+        }
+      } else if (response.body) {
+        await response.body.cancel().catch(() => {});
       }
 
-      updateProviderMetrics(provider, false, responseTime);
+      updateProviderMetrics(provider, false, Date.now() - startTime);
     } catch (error) {
+      updateProviderMetrics(provider, false, Date.now() - startTime);
+    } finally {
       clearTimeout(timeoutId);
-      const responseTime = Date.now() - startTime;
-      updateProviderMetrics(provider, false, responseTime);
     }
   }
 
   throw new Error('All fallback providers failed');
 }
 
+// Collision-free key: the full query except the 2-byte transaction ID.
 function getCacheKey(dnsQuery) {
-  const view = new Uint8Array(dnsQuery);
-  let hash = 2166136261;
-  for (let i = 4; i < view.length; i++) {
-    hash ^= view[i];
-    hash = Math.imul(hash, 16777619) >>> 0;
+  const view = toUint8(dnsQuery);
+  let key = 'dns_';
+  for (let i = 2; i < view.length; i++) {
+    key += HEX_TABLE[view[i]];
   }
-  return `dns_${hash}`;
+  return key;
 }
 
-function getCachedResponse(cacheKey) {
-  const cached = dnsCache.get(cacheKey);
+function getCachedEntry(cache, cacheKey, ttlSeconds) {
+  const cached = cache.get(cacheKey);
   if (!cached) return null;
 
-  if (Date.now() - cached.timestamp > cached.ttl * 1000) {
-    dnsCache.delete(cacheKey);
+  const ttl = ttlSeconds !== undefined ? ttlSeconds : cached.ttl;
+  const elapsedMs = Date.now() - cached.timestamp;
+  if (elapsedMs > ttl * 1000) {
+    cache.delete(cacheKey);
     return null;
   }
 
-  return cached.response;
+  // Move to the end of the Map so eviction removes the least recently used entries first.
+  cache.delete(cacheKey);
+  cache.set(cacheKey, cached);
+
+  return {
+    response: cached.response,
+    elapsedSeconds: Math.floor(elapsedMs / 1000),
+    remainingSeconds: Math.max(0, Math.ceil(ttl - elapsedMs / 1000))
+  };
+}
+
+function evictOldest(cache, count) {
+  let removed = 0;
+  for (const key of cache.keys()) {
+    if (removed++ >= count) break;
+    cache.delete(key);
+  }
+}
+
+function getCachedResponse(cacheKey) {
+  return getCachedEntry(dnsCache, cacheKey);
 }
 
 function setCachedResponse(cacheKey, response, ttl = DNS_CACHE_TTL_DEFAULT) {
   const finalTTL = Math.max(DNS_CACHE_TTL_MIN, Math.min(DNS_CACHE_TTL_MAX, ttl));
+  // Re-insert so Map order stays least-recently-used first.
+  dnsCache.delete(cacheKey);
   dnsCache.set(cacheKey, {
-    response: response,
+    response: copyBuffer(response),
     timestamp: Date.now(),
     ttl: finalTTL
   });
 
-  if (dnsCache.size > 8000) {
-    const sortedEntries = Array.from(dnsCache.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp);
-    const toDelete = sortedEntries.slice(0, 2000);
-    toDelete.forEach(([key]) => dnsCache.delete(key));
+  if (dnsCache.size > DNS_CACHE_MAX_ENTRIES) {
+    evictOldest(dnsCache, DNS_CACHE_EVICT_COUNT);
   }
 }
 
 function checkNegativeCache(cacheKey) {
-  const cached = negativeDnsCache.get(cacheKey);
-  if (!cached) return null;
-
-  if (Date.now() - cached.timestamp > NEGATIVE_CACHE_TTL * 1000) {
-    negativeDnsCache.delete(cacheKey);
-    return null;
-  }
-
-  return cached.response;
+  return getCachedEntry(negativeDnsCache, cacheKey, NEGATIVE_CACHE_TTL);
 }
 
 function setNegativeCache(cacheKey, response) {
+  negativeDnsCache.delete(cacheKey);
   negativeDnsCache.set(cacheKey, {
-    response: response,
+    response: copyBuffer(response),
     timestamp: Date.now()
   });
 
-  if (negativeDnsCache.size > 2000) {
-    const oldestKeys = Array.from(negativeDnsCache.keys()).slice(0, 500);
-    oldestKeys.forEach(key => negativeDnsCache.delete(key));
+  if (negativeDnsCache.size > NEGATIVE_CACHE_MAX_ENTRIES) {
+    evictOldest(negativeDnsCache, NEGATIVE_CACHE_EVICT_COUNT);
   }
 }
 
 function isNXDOMAIN(dnsResponse) {
-  try {
-    const view = new DataView(dnsResponse);
-    const flags = view.getUint16(2);
-    const rcode = flags & 0x000F;
-    return rcode === 3;
-  } catch (e) {
-    return false;
-  }
+  return getDnsRcode(dnsResponse) === DNS_RCODE_NXDOMAIN;
 }
 
+// Minimum TTL of the answer records; for empty answers, the SOA negative TTL (RFC 2308).
 function extractTTL(dnsResponse) {
   try {
-    const view = new DataView(dnsResponse);
-    let offset = 12;
-    const qdcount = view.getUint16(4);
+    const view = toUint8(dnsResponse);
+    let answerTTL = null;
+    let soaTTL = null;
 
-    for (let i = 0; i < qdcount; i++) {
-      while (offset < dnsResponse.byteLength && view.getUint8(offset) !== 0) {
-        const len = view.getUint8(offset);
-        if (len > 63) break;
-        offset += len + 1;
+    const wellFormed = walkDnsRecords(view, (rr) => {
+      if (rr.type === DNS_TYPE_OPT) return;
+      if (rr.section === 'answer') {
+        answerTTL = answerTTL === null ? rr.ttl : Math.min(answerTTL, rr.ttl);
+      } else if (rr.section === 'authority' && rr.type === DNS_TYPE_SOA && rr.rdlength >= 20) {
+        const soaMinimum = readUint32(view, rr.rdataOffset + rr.rdlength - 4);
+        const ttl = Math.min(rr.ttl, soaMinimum);
+        soaTTL = soaTTL === null ? ttl : Math.min(soaTTL, ttl);
       }
-      offset += 5;
-    }
+    });
 
-    if (offset + 10 < dnsResponse.byteLength) {
-      offset += 10;
-      const ttl = view.getUint32(offset);
-      return Math.min(ttl, DNS_CACHE_TTL_MAX);
-    }
+    if (!wellFormed) return DNS_CACHE_TTL_DEFAULT;
+    const ttl = answerTTL !== null ? answerTTL : soaTTL;
+    if (ttl === null) return DNS_CACHE_TTL_DEFAULT;
+    return Math.min(ttl, DNS_CACHE_TTL_MAX);
   } catch (e) {
     return DNS_CACHE_TTL_DEFAULT;
   }
-  return DNS_CACHE_TTL_DEFAULT;
 }
 
 function isRateLimited(clientIP) {
@@ -899,11 +1058,13 @@ function buildCORSHeaders(origin) {
     'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Accept, Cache-Control, DNT',
-    'Access-Control-Max-Age': '86400'
+    'Access-Control-Expose-Headers': 'X-Cache, X-Provider, X-Response-Time, X-Client-Region, X-Rate-Limit, Retry-After',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin, Accept'
   };
 }
 
-async function handleDNSQuery(request) {
+async function handleDNSQuery(request, ctx) {
   const url = new URL(request.url);
   const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
   const cfData = request.cf || {};
@@ -932,6 +1093,10 @@ async function handleDNSQuery(request) {
   let dnsQuery;
 
   if (request.method === 'POST') {
+    const declaredLength = Number(request.headers.get('Content-Length') || 0);
+    if (declaredLength > MAX_DNS_REQUEST_SIZE) {
+      return new Response('Request too large', { status: 413, headers: corsHeaders });
+    }
     dnsQuery = await request.arrayBuffer();
   } else if (request.method === 'GET') {
     const dnsParam = url.searchParams.get('dns');
@@ -943,12 +1108,16 @@ async function handleDNSQuery(request) {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), RACE_TIMEOUT);
           try {
-            const cfUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
+            const jsonParams = new URLSearchParams({ name, type });
+            for (const flag of ['do', 'cd']) {
+              const value = url.searchParams.get(flag);
+              if (value !== null) jsonParams.set(flag, value);
+            }
+            const cfUrl = `https://cloudflare-dns.com/dns-query?${jsonParams.toString()}`;
             const resp = await fetch(cfUrl, {
               headers: { 'Accept': 'application/dns-json', 'User-Agent': getRandomUserAgent() },
               signal: controller.signal
             });
-            clearTimeout(timeoutId);
             if (resp.ok) {
               const jsonData = await resp.json();
               return new Response(JSON.stringify(jsonData), {
@@ -956,7 +1125,10 @@ async function handleDNSQuery(request) {
                 headers: { ...corsHeaders, 'Content-Type': 'application/dns-json', 'X-Cache': 'MISS' }
               });
             }
+            if (resp.body) await resp.body.cancel().catch(() => {});
           } catch (e) {
+            // fall through to SERVFAIL-style JSON answer
+          } finally {
             clearTimeout(timeoutId);
           }
           return new Response(JSON.stringify({ Status: 2 }), {
@@ -968,7 +1140,7 @@ async function handleDNSQuery(request) {
       return new Response('Missing dns parameter', { status: 400, headers: corsHeaders });
     }
     try {
-      const paddedDns = dnsParam.replace(/-/g, '+').replace(/_/g, '/');
+      const paddedDns = dnsParam.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
       const padding = '='.repeat((4 - (paddedDns.length % 4)) % 4);
       dnsQuery = Uint8Array.from(atob(paddedDns + padding), c => c.charCodeAt(0)).buffer;
     } catch (e) {
@@ -982,6 +1154,10 @@ async function handleDNSQuery(request) {
     return new Response('Request too large', { status: 413, headers: corsHeaders });
   }
 
+  if (!isValidDnsQuery(dnsQuery)) {
+    return new Response('Invalid DNS message', { status: 400, headers: corsHeaders });
+  }
+
   if (concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
     return new Response('Server busy', { status: 503, headers: corsHeaders });
   }
@@ -990,19 +1166,16 @@ async function handleDNSQuery(request) {
   globalRequestCount++;
 
   try {
-    performHealthCheck().catch(() => {});
-    performAdaptiveLearning().catch(() => {});
-
     const cacheKey = getCacheKey(dnsQuery);
 
     const negativeCached = checkNegativeCache(cacheKey);
     if (negativeCached) {
-      return new Response(negativeCached, {
+      return new Response(prepareResponseForClient(negativeCached.response, dnsQuery, negativeCached.elapsedSeconds), {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/dns-message',
-          'Cache-Control': `public, max-age=${NEGATIVE_CACHE_TTL}`,
+          'Cache-Control': `public, max-age=${negativeCached.remainingSeconds}`,
           'X-Cache': 'NEGATIVE-HIT',
           'X-Provider': 'negative-cache'
         }
@@ -1011,12 +1184,12 @@ async function handleDNSQuery(request) {
 
     const cachedResponse = getCachedResponse(cacheKey);
     if (cachedResponse) {
-      return new Response(cachedResponse, {
+      return new Response(prepareResponseForClient(cachedResponse.response, dnsQuery, cachedResponse.elapsedSeconds), {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/dns-message',
-          'Cache-Control': `public, max-age=${DNS_CACHE_TTL_DEFAULT}`,
+          'Cache-Control': `public, max-age=${cachedResponse.remainingSeconds}`,
           'X-Cache': 'HIT',
           'X-Provider': 'cache',
           'X-Client-Region': clientRegion
@@ -1027,12 +1200,12 @@ async function handleDNSQuery(request) {
     if (pendingRequests.has(cacheKey)) {
       try {
         const coalescedResult = await pendingRequests.get(cacheKey);
-        return new Response(coalescedResult.data, {
+        return new Response(prepareResponseForClient(coalescedResult.data, dnsQuery), {
           status: 200,
           headers: {
             ...corsHeaders,
             'Content-Type': 'application/dns-message',
-            'Cache-Control': `public, max-age=${extractTTL(coalescedResult.data)}`,
+            'Cache-Control': `public, max-age=${getClientMaxAge(coalescedResult.data)}`,
             'X-Cache': 'COALESCED',
             'X-Provider': coalescedResult.provider,
             'X-Response-Time': `${coalescedResult.responseTime}ms`,
@@ -1040,11 +1213,12 @@ async function handleDNSQuery(request) {
           }
         });
       } catch (e) {
+        // The shared upstream request failed; retry independently below.
       }
     }
 
     const requestPromise = raceMultipleProviders(dnsQuery, request.headers, clientRegion)
-      .catch(() => fallbackProviderRequest(dnsQuery, request.headers, [], clientRegion));
+      .catch((error) => fallbackProviderRequest(dnsQuery, request.headers, (error && error.attemptedProviders) || [], clientRegion));
 
     pendingRequests.set(cacheKey, requestPromise);
 
@@ -1052,22 +1226,25 @@ async function handleDNSQuery(request) {
     try {
       result = await requestPromise;
     } finally {
-      pendingRequests.delete(cacheKey);
+      if (pendingRequests.get(cacheKey) === requestPromise) {
+        pendingRequests.delete(cacheKey);
+      }
     }
 
-    if (isNXDOMAIN(result.data)) {
+    const rcode = getDnsRcode(result.data);
+    if (rcode === DNS_RCODE_NXDOMAIN) {
       setNegativeCache(cacheKey, result.data);
-    } else {
+    } else if (rcode === DNS_RCODE_NOERROR) {
       const ttl = extractTTL(result.data);
       setCachedResponse(cacheKey, result.data, ttl);
     }
 
-    return new Response(result.data, {
+    return new Response(prepareResponseForClient(result.data, dnsQuery), {
       status: 200,
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/dns-message',
-        'Cache-Control': `public, max-age=${extractTTL(result.data)}`,
+        'Cache-Control': `public, max-age=${getClientMaxAge(result.data)}`,
         'X-Cache': 'MISS',
         'X-Provider': result.provider,
         'X-Response-Time': `${result.responseTime}ms`,
@@ -1081,22 +1258,51 @@ async function handleDNSQuery(request) {
       headers: {
         ...corsHeaders,
         'Content-Type': 'text/plain',
-        'X-Error': error.message
+        'X-Error': String((error && error.message) || 'Upstream failure').replace(/[\r\n]+/g, ' ').slice(0, 200)
       }
     });
   } finally {
     concurrentRequests--;
+    // Started after the lookup so health-check fetches never queue ahead of the user's query.
+    runInBackground(ctx, performHealthCheck());
+    runInBackground(ctx, performAdaptiveLearning());
   }
 }
 
-function generateAppleProfile(requestUrl) {
-  const baseUrl = new URL(requestUrl);
-  const dohUrl = `${baseUrl.protocol}//${baseUrl.hostname}/dns-query`;
-  const hostname = baseUrl.hostname;
+// SERVFAIL/REFUSED and other error answers must not be cached downstream.
+function getClientMaxAge(dnsResponse) {
+  const rcode = getDnsRcode(dnsResponse);
+  if (rcode !== DNS_RCODE_NOERROR && rcode !== DNS_RCODE_NXDOMAIN) return 0;
+  return extractTTL(dnsResponse);
+}
 
-  const uuid1 = crypto.randomUUID();
-  const uuid2 = crypto.randomUUID();
-  const uuid3 = crypto.randomUUID();
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+// Deterministic UUID (RFC 9562 version 8 layout) so re-installing the profile replaces it instead of duplicating it.
+async function stableUuid(seed) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(seed)));
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0F) | 0x80;
+  bytes[8] = (bytes[8] & 0x3F) | 0x80;
+  const hex = Array.from(bytes, b => HEX_TABLE[b]).join('').toUpperCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function generateAppleProfile(requestUrl) {
+  const baseUrl = new URL(requestUrl);
+  const dohUrl = escapeXml(`${baseUrl.protocol}//${baseUrl.hostname}/dns-query`);
+  const hostname = escapeXml(baseUrl.hostname);
+
+  const uuid1 = await stableUuid(`doh-proxy-profile:${baseUrl.hostname}`);
+  const uuid2 = await stableUuid(`doh-proxy-dns-settings-id:${baseUrl.hostname}`);
+  const uuid3 = await stableUuid(`doh-proxy-dns-settings-uuid:${baseUrl.hostname}`);
 
   const mobileconfig = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1398,16 +1604,53 @@ function generateStatsPage() {
 </html>`;
 }
 
-async function handleRequest(request) {
+// Same-origin mirror of the config templates, for networks where raw.githubusercontent.com is unreachable.
+async function handleConfigTemplate(fileName) {
+  if (!CONFIG_TEMPLATE_FILES.has(fileName)) {
+    return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG_TEMPLATE_TIMEOUT);
+  try {
+    const upstream = await fetch(CONFIG_TEMPLATE_BASE_URL + fileName, {
+      headers: { 'Accept': 'application/json, text/plain, */*', 'User-Agent': getRandomUserAgent() },
+      cf: { cacheTtl: CONFIG_TEMPLATE_CACHE_TTL, cacheEverything: true },
+      signal: controller.signal
+    });
+    if (!upstream.ok) {
+      if (upstream.body) await upstream.body.cancel().catch(() => {});
+      throw new Error(`HTTP ${upstream.status}`);
+    }
+    const text = await upstream.text();
+    JSON.parse(text);
+    return new Response(text, {
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': `public, max-age=${CONFIG_TEMPLATE_CACHE_TTL}`,
+        'X-Content-Type-Options': 'nosniff'
+      }
+    });
+  } catch (error) {
+    return new Response('Template unavailable', {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function handleRequest(request, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
 
   if (path === '/dns-query') {
-    return handleDNSQuery(request);
+    return handleDNSQuery(request, ctx);
   }
 
   if (path === '/apple') {
-    const profile = generateAppleProfile(request.url);
+    const profile = await generateAppleProfile(request.url);
     return new Response(profile, {
       headers: {
         'Content-Type': 'application/x-apple-aspen-config',
@@ -1416,9 +1659,17 @@ async function handleRequest(request) {
     });
   }
 
+  if (path.startsWith('/configs/')) {
+    return handleConfigTemplate(path.slice('/configs/'.length));
+  }
+
   if (path === '/stats') {
     return new Response(generateStatsPage(), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+      }
     });
   }
 
@@ -2416,7 +2667,7 @@ async function handleRequest(request) {
                         </div>
                     </div>
                     <div class="code-viewer-body">
-                        <div class="code-box" id="xrayFragmentConfig" data-lang="json"><div class="code-line"><span class="code-gutter">1</span><span class="code-content" style="color: var(--fg-muted);">در حال دریافت کانفیگ از گیت‌هاب...</span></div></div>
+                        <div class="code-box" id="xrayFragmentConfig" data-lang="json" data-dynamic="true" data-raw=""><div class="code-line"><span class="code-gutter">1</span><span class="code-content" style="color: var(--fg-muted);">در حال دریافت کانفیگ از گیت‌هاب...</span></div></div>
                     </div>
                 </div>
                 <p><strong>مزایای کانفیگ Fragment:</strong></p>
@@ -2575,17 +2826,27 @@ async function handleRequest(request) {
 
         function copyToClipboard(elementId, btn) {
             const element = document.getElementById(elementId);
-            const text = element.getAttribute('data-raw') || element.textContent;
+            if (!element || btn.getAttribute('data-busy') === '1') return;
+            const text = element.hasAttribute('data-raw') ? element.getAttribute('data-raw') : element.textContent;
             const originalHTML = btn.innerHTML;
 
-            const onDone = () => {
-                btn.classList.add('copied');
-                btn.innerHTML = '✓ کپی شد!';
+            const showFeedback = (html, cssClass) => {
+                btn.setAttribute('data-busy', '1');
+                if (cssClass) btn.classList.add(cssClass);
+                btn.innerHTML = html;
                 setTimeout(() => {
-                    btn.classList.remove('copied');
+                    if (cssClass) btn.classList.remove(cssClass);
                     btn.innerHTML = originalHTML;
+                    btn.removeAttribute('data-busy');
                 }, 2000);
             };
+
+            if (!text) {
+                showFeedback('⏳ کانفیگ هنوز آماده نیست');
+                return;
+            }
+
+            const onDone = () => showFeedback('✓ کپی شد!', 'copied');
 
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(onDone).catch(() => {
@@ -2631,7 +2892,7 @@ async function handleRequest(request) {
         }
 
         function enhanceCodeBlocks() {
-            document.querySelectorAll('.code-box[data-lang="json"]').forEach(function (box) {
+            document.querySelectorAll('.code-box[data-lang="json"]:not([data-dynamic])').forEach(function (box) {
                 const raw = box.textContent.replace(/\\n$/, '');
                 const lines = raw.split('\\n');
                 const rows = lines.map(function (line, i) {
@@ -2645,7 +2906,26 @@ async function handleRequest(request) {
 
         const WORKER_URL = "${workerUrl}";
         const WORKER_HOST = "${workerHost}";
-        const FRAGMENT_CONFIG_SOURCE = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-fragment.template.json';
+        const FRAGMENT_CONFIG_SOURCES = [
+            '/configs/doh-proxy-fragment.template.json',
+            'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-fragment.template.json'
+        ];
+
+        async function fetchTemplateText(sources) {
+            let lastError = null;
+            for (const source of sources) {
+                try {
+                    const response = await fetch(source, { cache: 'no-store' });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const text = await response.text();
+                    JSON.parse(text);
+                    return text;
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            throw lastError || new Error('No template source available');
+        }
 
         async function loadDynamicFragmentConfig(triggerBtn) {
             const box = document.getElementById('xrayFragmentConfig');
@@ -2656,9 +2936,7 @@ async function handleRequest(request) {
                 triggerBtn.innerHTML = '⏳ در حال دریافت...';
             }
             try {
-                const response = await fetch(FRAGMENT_CONFIG_SOURCE, { cache: 'no-store' });
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                let text = await response.text();
+                let text = await fetchTemplateText(FRAGMENT_CONFIG_SOURCES);
                 text = text.split('\${workerUrl}').join(WORKER_URL);
                 text = text.split('\${workerHost}').join(WORKER_HOST);
                 JSON.parse(text);
@@ -2855,7 +3133,10 @@ async function handleRequest(request) {
           };
         }
 
-        const FRONT_CONFIG_SOURCE = 'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-browser-front.template.json';
+        const FRONT_CONFIG_SOURCES = [
+          '/configs/doh-proxy-browser-front.template.json',
+          'https://raw.githubusercontent.com/4n0nymou3/cloudflare-doh-proxy/main/configs/doh-proxy-browser-front.template.json'
+        ];
         const frontState = { certText: '', configText: '' };
 
         function frontSetStatus(kind, message) {
@@ -2905,9 +3186,7 @@ async function handleRequest(request) {
           try {
             let text;
             try {
-              const response = await fetch(FRONT_CONFIG_SOURCE, { cache: 'no-store' });
-              if (!response.ok) throw new Error('HTTP ' + response.status);
-              text = await response.text();
+              text = await fetchTemplateText(FRONT_CONFIG_SOURCES);
             } catch (fetchError) {
               console.warn('Front config fetch failed.', fetchError);
               frontSetStatus('error', 'دریافت قالب کانفیگ از گیت‌هاب ناموفق بود. چند لحظه بعد دوباره تلاش کنید.');
@@ -2982,12 +3261,23 @@ async function handleRequest(request) {
 </html>`;
 
   return new Response(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer'
+    }
   });
 }
 
 export default {
-  async fetch(request) {
-    return handleRequest(request);
+  async fetch(request, env, ctx) {
+    try {
+      return await handleRequest(request, ctx);
+    } catch (error) {
+      return new Response('Internal Server Error', {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
   }
 };
